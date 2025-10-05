@@ -24,7 +24,10 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 PI_USER="${SUDO_USER:-pi}"
-PI_HOME="$(getent passwd "$PI_USER" | cut -d: -f6)"
+PI_HOME="$(getent passwd "$PI_USER" | cut -d: -f6 2>/dev/null || true)"
+if [[ -z "${PI_HOME:-}" ]]; then
+  PI_HOME="/home/$PI_USER"
+fi
 PIFM_DIR="$PI_HOME/PiFmRds"
 RDSCTL="/run/rds_ctl"
 
@@ -84,6 +87,8 @@ FREQ=$FREQ
 STEP=$STEP
 FMIN=$FMIN
 FMAX=$FMAX
+PI_USER="$PI_USER"
+PI_HOME="$PI_HOME"
 EOF
 
 echo "==> Prepare RDS control FIFO: $RDSCTL"
@@ -97,7 +102,16 @@ cat >/usr/local/bin/bt2fm.sh <<'BTFM'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
-PIFM="$HOME/PiFmRds/src/pi_fm_rds"; [ -x "$PIFM" ] || PIFM="/home/pi/PiFmRds/src/pi_fm_rds"
+USER_NAME="${PI_USER:-$(id -un)}"
+USER_HOME="${PI_HOME:-${HOME:-}}"
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 2>/dev/null || true)"
+fi
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="/home/$USER_NAME"
+fi
+PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
+[ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
 RDSCTL="/run/rds_ctl"; [ -p "$RDSCTL" ] || mkfifo "$RDSCTL"
 # Wait for A2DP capture device (BlueALSA)
 for i in {1..120}; do arecord -L | grep -q bluealsa && break; sleep 2; done
@@ -131,7 +145,16 @@ cat >/usr/local/bin/fm_announce.sh <<'FANN'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
-PIFM="/home/pi/PiFmRds/src/pi_fm_rds"; [ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
+USER_NAME="${PI_USER:-$(id -un)}"
+USER_HOME="${PI_HOME:-${HOME:-}}"
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 2>/dev/null || true)"
+fi
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="/home/$USER_NAME"
+fi
+PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
+[ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
 TARGET_FREQ="${1:-$FREQ}"
 TMPWAV="/run/fm_announce.wav"; mkdir -p /run
 say(){ if command -v pico2wave >/dev/null; then pico2wave -l en-US -w "$TMPWAV" "$1"; else espeak-ng -v en-us -s 160 -w "$TMPWAV" "$1"; fi; }
