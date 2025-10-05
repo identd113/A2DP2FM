@@ -152,7 +152,10 @@ cat >/usr/local/bin/bt-volume-freqd.sh <<'BVOLD'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
-STATE="/run/bt2fm.volume"; mkdir -p /run; echo "-1" > "$STATE"
+STATE="/run/bt2fm.volume"; PLAYSTATE="/run/bt2fm.playstate"
+mkdir -p /run
+echo "-1" > "$STATE"
+echo "idle" > "$PLAYSTATE"
 read_current_freq(){ grep -E '^FREQ=' /etc/default/bt2fm | cut -d= -f2; }
 write_freq(){ sed -i "s/^FREQ=.*/FREQ=$1/" /etc/default/bt2fm; }
 clamp(){ awk -v v="$1" -v lo="$FMIN" -v hi="$FMAX" 'BEGIN{ if(v<lo)v=lo; if(v>hi)v=hi; printf "%.1f", v }'; }
@@ -168,19 +171,38 @@ bump(){
   fi
 }
 dbus-monitor --system "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'" \
-| gawk -v state="$STATE" '
-  /string "org.bluez.MediaTransport1"/ { in_t=1; vol_seen=0; next }
-  in_t && /string "Volume"/ { vol_seen=1; next }
-  in_t && vol_seen && /variant/ {
-    if (match($0, /(uint(8|16)) +([0-9]+)/, m)) { print m[3]; fflush() }
-    in_t=0; vol_seen=0
-  }' \
-| while read -r VOL; do
-    last="$(cat "$STATE" 2>/dev/null || echo -1)"; echo "$VOL" > "$STATE"
-    [[ "$last" -lt 0 ]] && continue
-    if   [[ "$VOL" -gt "$last" ]]; then bump up
-    elif [[ "$VOL" -lt "$last" ]]; then bump down
-    fi
+| gawk '
+  /string "org.bluez.MediaTransport1"/ { in_t=1; field=""; next }
+  in_t && /string "Volume"/ { field="volume"; next }
+  in_t && /string "State"/ { field="state"; next }
+  in_t && /variant/ {
+    if (field=="volume" && match($0, /(uint(8|16)) +([0-9]+)/, m)) { print "VOL", m[3]; fflush() }
+    else if (field=="state" && match($0, /string \"([^\"]+)\"/, m)) { print "STATE", m[1]; fflush() }
+    field=""
+    next
+  }
+  /^signal/ { in_t=0; field=""; next }
+' \
+| while read -r KIND VALUE; do
+    case "$KIND" in
+      VOL)
+        [[ -z "${VALUE:-}" ]] && continue
+        last="$(cat "$STATE" 2>/dev/null || echo -1)"
+        echo "$VALUE" > "$STATE"
+        [[ "$last" -lt 0 ]] && continue
+        play_state="$(cat "$PLAYSTATE" 2>/dev/null || echo idle)"
+        [[ "$play_state" == "active" ]] && continue
+        if   [[ "$VALUE" -gt "$last" ]]; then bump up
+        elif [[ "$VALUE" -lt "$last" ]]; then bump down
+        fi
+        ;;
+      STATE)
+        [[ -z "${VALUE:-}" ]] && continue
+        echo "$VALUE" > "$PLAYSTATE"
+        # Reset baseline on any state change so the next volume event establishes direction
+        echo "-1" > "$STATE"
+        ;;
+    esac
   done
 BVOLD
 chmod +x /usr/local/bin/bt-volume-freqd.sh
@@ -337,7 +359,7 @@ INSTALL COMPLETE (with LED)
 • Antenna: connect a short 10–20 cm wire to GPIO4 (pin 7). Keep it short to stay polite.
 • Pair your phone with the Pi (name: 'raspberrypi'), ensure Media audio is enabled.
 • Play audio; tune a radio to $FREQ MHz.
-• Use phone volume keys to change frequency. Pi flashes LED (3 quick) and announces new station.
+• Use phone volume keys while playback is paused to change frequency (playing = normal volume). Pi flashes LED (3 quick) and announces new station.
 • RDS shows track info (PS=short artist/station, RT="Artist – Title • Album").
 
 LED behavior:
