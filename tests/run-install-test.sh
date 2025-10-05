@@ -54,6 +54,8 @@ INSTALL_PATHS=(
 cleanup_install_artifacts() {
   rm -rf /home/pi/PiFmRds
   rm -f /run/rds_ctl
+  rm -rf /usr/local/src/bluez-alsa
+  rm -f /usr/local/bin/bluealsa /usr/local/bin/bluealsad
   for path in "${INSTALL_PATHS[@]}"; do
     rm -f "$path"
   done
@@ -77,7 +79,7 @@ ensure_pi_user
 cleanup_install_artifacts
 
 action "Running installer with stubs"
-SUDO_USER=pi bash "$INSTALLER" --freq 102.5 >"$TMP_WORK/installer.log" 2>&1 || {
+A2DP2FM_FORCE_BLUEALSA_SOURCE=1 SUDO_USER=pi bash "$INSTALLER" --freq 102.5 >"$TMP_WORK/installer.log" 2>&1 || {
   cat "$TMP_WORK/installer.log" >&2
   fail "Installer execution failed"
 }
@@ -114,19 +116,29 @@ if [[ -f "$A2DP2FM_STUB_LOG_DIR/apt-get.log" ]]; then
   mapfile -t apt_calls <"$A2DP2FM_STUB_LOG_DIR/apt-get.log"
   [[ "${apt_calls[0]:-}" == "apt-get update -y" ]] || fail "apt-get update not invoked"
   install_line="${apt_calls[1]:-}"
-  expected_prefix="apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus bluez bluez-tools "
-  expected_suffix=" alsa-utils sox jq libttspico-utils espeak-ng gawk"
-  if [[ "$install_line" == "${expected_prefix}bluealsa${expected_suffix}" ]]; then
-    :
-  elif [[ "$install_line" == "${expected_prefix}bluez-alsa${expected_suffix}" ]]; then
-    :
-  else
-    fail "apt-get install not invoked with expected packages"
-  fi
+  expected_base="apt-get install -y git build-essential autoconf automake libtool pkg-config libasound2-dev libdbus-1-dev libglib2.0-dev libbluetooth-dev libsbc-dev libsndfile1-dev python3-dbus python3-gi dbus bluez bluez-tools alsa-utils sox jq libttspico-utils espeak-ng gawk"
+  case "$install_line" in
+    "$expected_base") ;;
+    "$expected_base bluealsa") ;;
+    "$expected_base bluez-alsa") ;;
+    *)
+      fail "apt-get install not invoked with expected packages"
+      ;;
+  esac
   pass "apt-get commands captured"
 else
   fail "apt-get log missing"
 fi
+
+if [[ ! -x /usr/local/bin/bluealsa && ! -x /usr/local/bin/bluealsad ]]; then
+  fail "BlueALSA daemon binary not installed"
+fi
+pass "BlueALSA daemon installed from source"
+
+if [[ ! -f /etc/systemd/system/bluealsa.service ]]; then
+  fail "BlueALSA service unit missing"
+fi
+pass "BlueALSA service unit created"
 
 BT_SERVICE=/etc/systemd/system/bt2fm.service
 if ! grep -F 'ExecStart=/usr/local/bin/bt2fm.sh' "$BT_SERVICE" >/dev/null; then
