@@ -39,6 +39,12 @@ The script targets Raspberry Pi OS (Debian-based). It expects:
 
 All required packages are installed automatically via `apt-get` when you run the installer.
 
+If you want to work with the Python helper (`avrcp_rds.py`) outside of the
+installer flow, the Python dependencies are listed in `requirements.txt`. The
+modules are shipped by Raspberry Pi OS via `apt-get` (`python3-dbus` and
+`python3-gi`), but the requirement file is provided for tooling that inspects
+Python dependencies.
+
 ## Installation
 
 1. **Run directly with `curl` (optional).** For a one-liner install on a freshly
