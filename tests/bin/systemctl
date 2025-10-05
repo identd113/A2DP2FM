@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Systemctl shim to keep the installer idempotent in containers lacking systemd.
+set -euo pipefail
+LOG_DIR=${A2DP2FM_STUB_LOG_DIR:-/tmp/a2dp2fm-stubs}
+mkdir -p "$LOG_DIR"
+printf '%s\n' "systemctl $*" >>"$LOG_DIR/systemctl.log"
+exit 0

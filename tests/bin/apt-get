@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stubbed apt-get used for offline verification in CI containers without apt access.
+set -euo pipefail
+LOG_DIR=${A2DP2FM_STUB_LOG_DIR:-/tmp/a2dp2fm-stubs}
+mkdir -p "$LOG_DIR"
+printf '%s\n' "apt-get $*" >>"$LOG_DIR/apt-get.log"
+exit 0

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# raspi-config placeholder so CI containers without the tool can still exercise the script.
+set -euo pipefail
+LOG_DIR=${A2DP2FM_STUB_LOG_DIR:-/tmp/a2dp2fm-stubs}
+mkdir -p "$LOG_DIR"
+printf '%s\n' "raspi-config $*" >>"$LOG_DIR/raspi-config.log"
+exit 0
