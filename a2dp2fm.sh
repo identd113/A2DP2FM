@@ -181,6 +181,18 @@ else
 fi
 
 echo "==> Headless BT setup (discoverable + pairable on boot)"
+cat >/usr/local/sbin/bt-setup-bluetooth.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+bluetoothctl <<'BCTL'
+agent on
+default-agent
+power on
+discoverable on
+pairable on
+BCTL
+EOF
+chmod +x /usr/local/sbin/bt-setup-bluetooth.sh
 cat >/etc/systemd/system/bt-setup.service <<'EOF'
 [Unit]
 Description=Bluetooth adapter headless setup (power on, agent, discoverable)
@@ -188,13 +200,7 @@ After=bluetooth.service
 Requires=bluetooth.service
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -lc 'bluetoothctl <<BCTL
-agent on
-default-agent
-power on
-discoverable on
-pairable on
-BCTL'
+ExecStart=/usr/local/sbin/bt-setup-bluetooth.sh
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
