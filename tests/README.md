@@ -20,3 +20,17 @@ validated.
 
 Each shim logs its invocations to `$A2DP2FM_STUB_LOG_DIR` so you can audit what would
 have been executed on a real Raspberry Pi. Remove the directory afterwards if desired.
+
+## Automated merge test
+
+Run `tests/run-install-test.sh` to execute the installer against the shims and verify
+key artifacts. The script:
+
+- Ensures a `pi` user exists for file ownership operations.
+- Executes the installer with a custom frequency while capturing logs.
+- Confirms that configuration files, helper scripts, and systemd unit files are emitted.
+- Verifies that the runtime script waits up to 240 seconds for the BlueALSA device,
+  guaranteeing adequate startup time during installation.
+- Cleans up generated files so the test remains idempotent.
+
+This harness is safe to run in CI containers and is suitable for merge-time validation.

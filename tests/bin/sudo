@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Minimal sudo stub that drops user switching but keeps PATH intact for tests.
+set -euo pipefail
+args=()
+while (($#)); do
+  case "$1" in
+    -u)
+      # Skip the username; we already run as root in the test harness.
+      shift 2 || exit 1
+      ;;
+    -E|-n|-H)
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      # Ignore other flags that may appear; they are not required for the tests.
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+if (($# == 0)); then
+  exit 0
+fi
+exec "$@"
