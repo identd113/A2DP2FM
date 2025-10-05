@@ -34,18 +34,139 @@ RDSCTL="/run/rds_ctl"
 echo "==> Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-BLUEALSA_PKG="bluealsa"
-if command -v apt-cache >/dev/null 2>&1; then
-  if apt-cache show "$BLUEALSA_PKG" >/dev/null 2>&1; then
-    :
-  elif apt-cache show bluez-alsa >/dev/null 2>&1; then
-    BLUEALSA_PKG="bluez-alsa"
-  else
-    echo "Warning: Neither bluealsa nor bluez-alsa reported by apt-cache; proceeding with $BLUEALSA_PKG." >&2
+
+declare -a APT_PACKAGES=(
+  git build-essential autoconf automake libtool pkg-config
+  libasound2-dev libdbus-1-dev libglib2.0-dev libbluetooth-dev libsbc-dev
+  libsndfile1-dev python3-dbus python3-gi dbus
+  bluez bluez-tools alsa-utils sox jq libttspico-utils espeak-ng gawk
+)
+
+BLUEALSA_SOURCE_ONLY=0
+if [[ "${A2DP2FM_FORCE_BLUEALSA_SOURCE:-0}" == "1" ]]; then
+  BLUEALSA_SOURCE_ONLY=1
+fi
+
+BLUEALSA_PKG=""
+if (( BLUEALSA_SOURCE_ONLY == 0 )); then
+  if command -v apt-cache >/dev/null 2>&1; then
+    for candidate in bluealsa bluez-alsa; do
+      if POLICY=$(apt-cache policy "$candidate" 2>/dev/null) && \
+         [[ -n "$POLICY" ]] && ! grep -q 'Candidate: (none)' <<<"$POLICY"; then
+        BLUEALSA_PKG="$candidate"
+        break
+      fi
+    done
   fi
 fi
-apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus \
-                   bluez bluez-tools "$BLUEALSA_PKG" alsa-utils sox jq libttspico-utils espeak-ng gawk
+
+if [[ -n "$BLUEALSA_PKG" ]]; then
+  APT_PACKAGES+=("$BLUEALSA_PKG")
+fi
+
+apt-get install -y "${APT_PACKAGES[@]}"
+
+BLUEZ_ALSA_SRC_DIR="/usr/local/src/bluez-alsa"
+BLUEZ_ALSA_REPO="https://github.com/Arkq/bluez-alsa.git"
+
+bluealsa_daemon_path() {
+  local candidate path=""
+  for candidate in bluealsad bluealsa; do
+    if path="$(command -v "$candidate" 2>/dev/null)" && [[ -n "$path" ]]; then
+      printf '%s' "$path"
+      return 0
+    fi
+    for prefix in /usr/local/bin /usr/local/sbin /usr/bin /usr/sbin; do
+      if [[ -x "$prefix/$candidate" ]]; then
+        printf '%s' "$prefix/$candidate"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+install_bluealsa_from_source() {
+  local repo="$BLUEZ_ALSA_REPO"
+  local dir="$BLUEZ_ALSA_SRC_DIR"
+  echo "==> Build BlueALSA from source (Arkq/bluez-alsa)"
+  mkdir -p "$(dirname "$dir")"
+  rm -rf "$dir"
+  git clone --depth 1 "$repo" "$dir"
+  pushd "$dir" >/dev/null
+  if [[ -x ./bootstrap ]]; then
+    ./bootstrap
+  elif command -v autoreconf >/dev/null 2>&1; then
+    autoreconf -fi
+  fi
+  if [[ -x ./configure ]]; then
+    ./configure --disable-hcitop >/dev/null
+  else
+    echo "Warning: Missing configure script when building bluez-alsa." >&2
+  fi
+  local jobs=1
+  if command -v nproc >/dev/null 2>&1; then
+    jobs="$(nproc)"
+  fi
+  make -j"$jobs"
+  make install
+  popd >/dev/null
+  if [[ -x /usr/local/bin/bluealsa && ! -x /usr/local/bin/bluealsad ]]; then
+    ln -sf /usr/local/bin/bluealsa /usr/local/bin/bluealsad
+  elif [[ -x /usr/local/bin/bluealsad && ! -x /usr/local/bin/bluealsa ]]; then
+    ln -sf /usr/local/bin/bluealsad /usr/local/bin/bluealsa
+  fi
+  ldconfig
+}
+
+ensure_bluealsa_service() {
+  local daemon
+  daemon="$(bluealsa_daemon_path || true)"
+  if [[ -z "$daemon" ]]; then
+    echo "Warning: BlueALSA daemon binary unavailable; skipping service setup." >&2
+    return
+  fi
+  local unit_path=""
+  for path in /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system; do
+    if [[ -f "$path/bluealsa.service" ]]; then
+      unit_path="$path/bluealsa.service"
+      break
+    fi
+  done
+  if [[ -z "$unit_path" ]]; then
+    cat >/etc/systemd/system/bluealsa.service <<EOF
+[Unit]
+Description=BlueALSA Bluetooth audio daemon
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=$daemon -p a2dp-sink
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    unit_path="/etc/systemd/system/bluealsa.service"
+    systemctl daemon-reload || true
+  else
+    systemctl daemon-reload || true
+  fi
+  systemctl enable bluealsa.service || true
+  systemctl restart bluealsa.service || systemctl start bluealsa.service || true
+}
+
+BLUEALSA_BIN_PRESENT="$(bluealsa_daemon_path || true)"
+if [[ -n "$BLUEALSA_PKG" ]]; then
+  echo "==> Using apt BlueALSA package: $BLUEALSA_PKG"
+elif [[ -n "$BLUEALSA_BIN_PRESENT" ]]; then
+  echo "==> BlueALSA already present; skipping source build"
+else
+  install_bluealsa_from_source
+fi
+
+ensure_bluealsa_service
 
 echo "==> Skip boot wait for network (offline-friendly)"
 if command -v raspi-config >/dev/null 2>&1; then

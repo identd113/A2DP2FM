@@ -86,7 +86,7 @@ Python dependencies.
 
 4. **Wait for the script to finish.** It performs the following actions:
 
-   * Installs Bluetooth, audio, PiFmRds build dependencies, speech synthesis utilities, and helper tools via `apt-get`.
+   * Installs Bluetooth, audio, PiFmRds build dependencies, speech synthesis utilities, and helper tools via `apt-get`, preferring packaged BlueALSA (`bluealsa`/`bluez-alsa`) when available and otherwise compiling the [Arkq/bluez-alsa](https://github.com/Arkq/bluez-alsa) source release automatically.
    * Creates a `bt-setup.service` systemd unit that powers on the adapter, enables the agent, and sets the controller to be discoverable/pairable on boot.
    * Clones PiFmRds into `/home/${SUDO_USER:-pi}/PiFmRds` (the invoking sudo user's home) and builds `pi_fm_rds`.
    * Stores runtime defaults in `/etc/default/bt2fm` using the values you provided.
