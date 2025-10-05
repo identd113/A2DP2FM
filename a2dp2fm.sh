@@ -35,12 +35,13 @@ echo "==> Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 BLUEALSA_PKG="bluealsa"
-if ! apt-cache show "$BLUEALSA_PKG" >/dev/null 2>&1; then
-  if apt-cache show bluez-alsa >/dev/null 2>&1; then
+if command -v apt-cache >/dev/null 2>&1; then
+  if apt-cache show "$BLUEALSA_PKG" >/dev/null 2>&1; then
+    :
+  elif apt-cache show bluez-alsa >/dev/null 2>&1; then
     BLUEALSA_PKG="bluez-alsa"
   else
-    echo "Neither bluealsa nor bluez-alsa is available in APT repositories." >&2
-    exit 1
+    echo "Warning: Neither bluealsa nor bluez-alsa reported by apt-cache; proceeding with $BLUEALSA_PKG." >&2
   fi
 fi
 apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus \
@@ -123,11 +124,21 @@ PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
 [ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
 RDSCTL="/run/rds_ctl"; [ -p "$RDSCTL" ] || mkfifo "$RDSCTL"
 # Wait for A2DP capture device (BlueALSA)
-for i in {1..120}; do arecord -L | grep -q bluealsa && break; sleep 2; done
-arecord -L | grep -q bluealsa || exit 0
+BLUEALSA_NAMES='bluealsa|bluealsad'
+for i in {1..120}; do
+  if arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES"; then
+    break
+  fi
+  sleep 2
+done
+arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES" || exit 0
 CURF="$(grep -E '^FREQ=' /etc/default/bt2fm | cut -d= -f2)"
 PSDEF="BT-PI"; RTDEF="Bluetooth audio"
-arecord -D bluealsa:PROFILE=a2dp -f S16_LE -r 44100 -c 2 \
+PCM_PREFIX="bluealsa"
+if arecord -L 2>/dev/null | grep -q bluealsad; then
+  PCM_PREFIX="bluealsad"
+fi
+arecord -D "${PCM_PREFIX}:PROFILE=a2dp" -f S16_LE -r 44100 -c 2 \
   | sudo "$PIFM" -freq "$CURF" -ps "$PSDEF" -rt "$RTDEF" -ctl "$RDSCTL" -audio -
 BTFM
 chmod +x /usr/local/bin/bt2fm.sh
@@ -349,7 +360,8 @@ set -euo pipefail
 is_discoverable(){ bluetoothctl show 2>/dev/null | awk '/Discoverable:/{print $2}' | grep -q yes; }
 any_connected(){ bluetoothctl paired-devices | awk '{print $2}' | while read -r d; do
   if bluetoothctl info "$d" 2>/dev/null | awk '/Connected:/{print $2}' | grep -q yes; then echo yes; exit 0; fi; done; exit 1; }
-bluealsa_ready(){ arecord -L 2>/dev/null | grep -q bluealsa; }
+BLUEALSA_NAMES='bluealsa|bluealsad'
+bluealsa_ready(){ arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES"; }
 streaming(){ systemctl is-active --quiet bt2fm.service && bluealsa_ready; }
 while true; do
   if streaming; then /usr/local/bin/ledctl.sh on; sleep 1
