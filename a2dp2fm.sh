@@ -188,6 +188,8 @@ bluetoothctl <<'BCTL'
 agent on
 default-agent
 power on
+discoverable-timeout 0
+pairable-timeout 0
 discoverable on
 pairable on
 BCTL
