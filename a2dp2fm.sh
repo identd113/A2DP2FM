@@ -534,8 +534,15 @@ cat >/usr/local/bin/led-statusd.sh <<'LEDD'
 #!/usr/bin/env bash
 set -euo pipefail
 is_discoverable(){ bluetoothctl show 2>/dev/null | awk '/Discoverable:/{print $2}' | grep -q yes; }
-any_connected(){ bluetoothctl paired-devices | awk '{print $2}' | while read -r d; do
-  if bluetoothctl info "$d" 2>/dev/null | awk '/Connected:/{print $2}' | grep -q yes; then echo yes; exit 0; fi; done; exit 1; }
+any_connected(){
+  while read -r d; do
+    if bluetoothctl info "$d" 2>/dev/null | awk '/Connected:/{print $2}' | grep -q yes; then
+      echo yes
+      return 0
+    fi
+  done < <(bluetoothctl paired-devices | awk '{print $2}')
+  return 1
+}
 BLUEALSA_NAMES='bluealsa|bluealsad'
 bluealsa_ready(){ arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES"; }
 streaming(){ systemctl is-active --quiet bt2fm.service && bluealsa_ready; }
