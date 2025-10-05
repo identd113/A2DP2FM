@@ -34,8 +34,17 @@ RDSCTL="/run/rds_ctl"
 echo "==> Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
+BLUEALSA_PKG="bluealsa"
+if ! apt-cache show "$BLUEALSA_PKG" >/dev/null 2>&1; then
+  if apt-cache show bluez-alsa >/dev/null 2>&1; then
+    BLUEALSA_PKG="bluez-alsa"
+  else
+    echo "Neither bluealsa nor bluez-alsa is available in APT repositories." >&2
+    exit 1
+  fi
+fi
 apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus \
-                   bluez bluez-tools bluez-alsa alsa-utils sox jq libttspico-utils espeak-ng gawk
+                   bluez bluez-tools "$BLUEALSA_PKG" alsa-utils sox jq libttspico-utils espeak-ng gawk
 
 echo "==> Skip boot wait for network (offline-friendly)"
 if command -v raspi-config >/dev/null 2>&1; then
