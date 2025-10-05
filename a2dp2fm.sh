@@ -199,6 +199,18 @@ echo "==> Headless BT setup (discoverable + pairable on boot)"
 cat >/usr/local/sbin/bt-setup-bluetooth.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if command -v rfkill >/dev/null 2>&1; then
+  while rfkill list bluetooth 2>/dev/null | grep -qi 'Soft blocked: yes'; do
+    rfkill unblock bluetooth || true
+    sleep 1
+  done
+fi
+
+systemctl restart bluetooth.service || true
+if systemctl list-unit-files 2>/dev/null | grep -q '^hciuart\.service'; then
+  systemctl restart hciuart.service || true
+fi
 bluetoothctl <<'BCTL'
 agent on
 default-agent
