@@ -1,0 +1,4 @@
+# Python dependencies used by /usr/local/bin/avrcp_rds.py
+# Installed automatically via apt-get (python3-dbus, python3-gi)
+dbus-python
+PyGObject
