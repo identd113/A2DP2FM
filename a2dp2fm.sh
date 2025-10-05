@@ -126,15 +126,30 @@ ensure_bluealsa_service() {
     echo "Warning: BlueALSA daemon binary unavailable; skipping service setup." >&2
     return
   fi
-  local unit_path=""
-  for path in /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system; do
-    if [[ -f "$path/bluealsa.service" ]]; then
-      unit_path="$path/bluealsa.service"
-      break
+  local current_fragment=""
+  current_fragment="$(systemctl show -p FragmentPath --value bluealsa.service 2>/dev/null || true)"
+  if [[ -z "$current_fragment" || ! -f "$current_fragment" ]]; then
+    for path in /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system; do
+      if [[ -f "$path/bluealsa.service" ]]; then
+        current_fragment="$path/bluealsa.service"
+        break
+      fi
+    done
+  fi
+
+  local current_exec_line="" current_exec_path="" rewrote=0 desired_unit_path="/etc/systemd/system/bluealsa.service"
+  if [[ -n "$current_fragment" && -f "$current_fragment" ]]; then
+    current_exec_line="$(grep -m1 '^ExecStart=' "$current_fragment" || true)"
+    if [[ -n "$current_exec_line" ]]; then
+      current_exec_line="${current_exec_line#ExecStart=}"
+      current_exec_line="${current_exec_line#-}"
+      local IFS=' '
+      read -r current_exec_path _ <<<"$current_exec_line" || true
     fi
-  done
-  if [[ -z "$unit_path" ]]; then
-    cat >/etc/systemd/system/bluealsa.service <<EOF
+  fi
+
+  if [[ -z "$current_fragment" || "$current_exec_path" != "$daemon" ]]; then
+    cat >"$desired_unit_path" <<EOF
 [Unit]
 Description=BlueALSA Bluetooth audio daemon
 After=bluetooth.service
@@ -148,9 +163,9 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
-    unit_path="/etc/systemd/system/bluealsa.service"
-    systemctl daemon-reload || true
-  else
+    rewrote=1
+  fi
+  if (( rewrote )); then
     systemctl daemon-reload || true
   fi
   systemctl enable bluealsa.service || true
