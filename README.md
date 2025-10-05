@@ -13,6 +13,7 @@ The installer is intended for a headless Raspberry Pi (no desktop environment) w
 * **Volume-based frequency changes** – Monitors Bluetooth absolute volume changes and repurposes the phone volume keys to bump the FM frequency by a configurable step.
 * **AVRCP metadata to RDS** – Mirrors track metadata (Artist, Title, Album) into the RDS PS/RT fields.
 * **LED status feedback** – Reconfigures the Raspberry Pi ACT LED and provides visual cues for pairing, connection, streaming, and frequency adjustments.
+* **Offline-friendly boot** – Disables the "wait for network" delay so the Pi completes startup even without network connectivity.
 
 ## Hardware requirements
 
@@ -29,7 +30,7 @@ The installer is intended for a headless Raspberry Pi (no desktop environment) w
 The script targets Raspberry Pi OS (Debian-based). It expects:
 
 * `sudo` access to run as root (the script exits if not run with `sudo`).
-* Network connectivity for `apt-get` and cloning PiFmRds from GitHub.
+* Network connectivity for `apt-get` and cloning PiFmRds from GitHub during installation (the system will no longer wait for a network connection on subsequent boots).
 * Python 3 with GObject introspection libraries (installed automatically).
 
 All required packages are installed automatically via `apt-get` when you run the installer.

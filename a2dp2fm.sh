@@ -33,6 +33,18 @@ apt-get update -y
 apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus \
                    bluez bluez-tools bluez-alsa alsa-utils sox jq libttspico-utils espeak-ng gawk
 
+echo "==> Skip boot wait for network (offline-friendly)"
+if command -v raspi-config >/dev/null 2>&1; then
+  raspi-config nonint do_boot_wait 0 || true
+else
+  systemctl disable --now systemd-networkd-wait-online.service 2>/dev/null || true
+  systemctl mask systemd-networkd-wait-online.service 2>/dev/null || true
+  systemctl disable --now NetworkManager-wait-online.service 2>/dev/null || true
+  systemctl mask NetworkManager-wait-online.service 2>/dev/null || true
+  systemctl disable --now dhcpcd-wait-online.service 2>/dev/null || true
+  systemctl mask dhcpcd-wait-online.service 2>/dev/null || true
+fi
+
 echo "==> Headless BT setup (discoverable + pairable on boot)"
 cat >/etc/systemd/system/bt-setup.service <<'EOF'
 [Unit]
