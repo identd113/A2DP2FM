@@ -44,10 +44,12 @@ INSTALL_PATHS=(
   /usr/local/bin/avrcp_rds.py
   /usr/local/bin/ledctl.sh
   /usr/local/bin/led-statusd.sh
+  /usr/local/sbin/bt-agent-wrapper.sh
   /etc/systemd/system/bt2fm.service
   /etc/systemd/system/bt-volume-freqd.service
   /etc/systemd/system/avrcp-rds.service
   /etc/systemd/system/led-statusd.service
+  /etc/systemd/system/bt-agent.service
   /etc/systemd/system/bt-setup.service
 )
 
@@ -139,6 +141,20 @@ if [[ ! -f /etc/systemd/system/bluealsa.service ]]; then
   fail "BlueALSA service unit missing"
 fi
 pass "BlueALSA service unit created"
+
+SYSTEMCTL_LOG="$A2DP2FM_STUB_LOG_DIR/systemctl.log"
+if [[ -f "$SYSTEMCTL_LOG" ]]; then
+  if ! grep -q 'systemctl enable bt-agent.service' "$SYSTEMCTL_LOG"; then
+    fail "bt-agent.service was not enabled"
+  fi
+  pass "bt-agent.service enabled"
+  if ! grep -q 'systemctl restart bt-agent.service' "$SYSTEMCTL_LOG"; then
+    fail "bt-agent.service was not restarted"
+  fi
+  pass "bt-agent.service restarted"
+else
+  fail "systemctl log missing"
+fi
 
 BT_SERVICE=/etc/systemd/system/bt2fm.service
 if ! grep -F 'ExecStart=/usr/local/bin/bt2fm.sh' "$BT_SERVICE" >/dev/null; then
