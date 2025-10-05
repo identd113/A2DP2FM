@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install_bt_fm_rds_with_led.sh
 # Headless Bluetooth A2DP -> PiFmRds (FM on GPIO4) + Volume-key freq control + TTS announce + AVRCP->RDS + LED status
+# Tags: raspberry-pi, bluetooth, a2dp, fm-transmitter, rds, pi-fm-rds, headless-install, systemd, tts
 # Usage: sudo bash install_bt_fm_rds_with_led.sh [--freq 87.9] [--step 0.2] [--min 87.7] [--max 107.9]
 
 set -euo pipefail

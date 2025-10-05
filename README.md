@@ -4,6 +4,10 @@ This repository contains a single installer script, `a2dp2fm.sh`, that configure
 
 The installer is intended for a headless Raspberry Pi (no desktop environment) with a Bluetooth adapter and speaker/headphone audio disabled. After installation you can pair a phone with the Pi, stream audio over Bluetooth, and receive the broadcast on a nearby FM radio tuned to your configured frequency.
 
+## Tags
+
+`raspberry-pi` · `bluetooth` · `a2dp` · `fm-transmitter` · `rds` · `pi-fm-rds` · `headless-install` · `systemd` · `tts`
+
 ## Features
 
 * **Fully automated provisioning** – Installs all required packages, clones PiFmRds, builds the transmitter, and configures systemd units in one pass.
