@@ -36,14 +36,33 @@ All required packages are installed automatically via `apt-get` when you run the
 
 ## Installation
 
-1. **Clone this repository** on the Raspberry Pi (or download the script) and move into the directory:
+1. **Run directly with `curl` (optional).** For a one-liner install on a freshly
+   provisioned Pi you can stream the script straight into `bash`:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/<your-account>/A2DP2FM/main/a2dp2fm.sh \
+     | sudo bash -s --
+   ```
+
+   Append any CLI flags after the `--` if you want to override defaults, e.g.:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/<your-account>/A2DP2FM/main/a2dp2fm.sh \
+     | sudo bash -s -- --freq 88.1 --step 0.1
+   ```
+
+   This approach is handy for quick installs, while cloning the repo still works
+   for local edits and `git pull` updates.
+
+2. **Or clone this repository** on the Raspberry Pi (or download the script) and
+   move into the directory:
 
    ```bash
    git clone https://github.com/<your-account>/A2DP2FM.git
    cd A2DP2FM
    ```
 
-2. **Run the installer as root**. You can customize default frequency parameters via flags:
+3. **Run the installer as root**. You can customize default frequency parameters via flags:
 
    ```bash
    sudo bash a2dp2fm.sh [--freq 87.9] [--step 0.2] [--min 87.7] [--max 107.9]
@@ -53,7 +72,7 @@ All required packages are installed automatically via `apt-get` when you run the
    * `--step` – Frequency step size (MHz) applied when changing stations with volume keys.
    * `--min` / `--max` – Lower/upper bounds (MHz) enforced when adjusting frequency.
 
-3. **Wait for the script to finish.** It performs the following actions:
+4. **Wait for the script to finish.** It performs the following actions:
 
    * Installs Bluetooth, audio, PiFmRds build dependencies, speech synthesis utilities, and helper tools via `apt-get`.
    * Creates a `bt-setup.service` systemd unit that powers on the adapter, enables the agent, and sets the controller to be discoverable/pairable on boot.
@@ -70,7 +89,7 @@ All required packages are installed automatically via `apt-get` when you run the
    * Updates `/boot/config.txt` (and `/boot/firmware/config.txt` if present) to disable kernel control of the ACT LED.
    * Enables and restarts the services so the system is ready immediately.
 
-4. **Reboot (optional but recommended).** Disabling the kernel LED trigger sometimes requires one reboot before the LED can be fully controlled by software.
+5. **Reboot (optional but recommended).** Disabling the kernel LED trigger sometimes requires one reboot before the LED can be fully controlled by software.
 
 ## Usage
 
