@@ -99,11 +99,30 @@ if ! grep -F 'sleep 2' "$BT2FM_SCRIPT" >/dev/null; then
   fail "bt2fm.sh missing 2s sleep in wait loop"
 fi
 pass "bt2fm.sh waits up to 240s for BlueALSA"
+if ! grep -F 'bluealsa|bluealsad' "$BT2FM_SCRIPT" >/dev/null; then
+  fail "bt2fm.sh does not handle bluealsad rename"
+fi
+pass "bt2fm.sh checks for both bluealsa and bluealsad"
+
+LED_STATUS_SCRIPT=/usr/local/bin/led-statusd.sh
+if ! grep -F 'bluealsa|bluealsad' "$LED_STATUS_SCRIPT" >/dev/null; then
+  fail "led-statusd.sh does not handle bluealsad rename"
+fi
+pass "led-statusd.sh checks for both bluealsa and bluealsad"
 
 if [[ -f "$A2DP2FM_STUB_LOG_DIR/apt-get.log" ]]; then
   mapfile -t apt_calls <"$A2DP2FM_STUB_LOG_DIR/apt-get.log"
   [[ "${apt_calls[0]:-}" == "apt-get update -y" ]] || fail "apt-get update not invoked"
-  [[ "${apt_calls[1]:-}" == "apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus bluez bluez-tools bluez-alsa alsa-utils sox jq libttspico-utils espeak-ng gawk" ]] || fail "apt-get install not invoked with expected packages"
+  install_line="${apt_calls[1]:-}"
+  expected_prefix="apt-get install -y git build-essential libsndfile1-dev python3-dbus python3-gi dbus bluez bluez-tools "
+  expected_suffix=" alsa-utils sox jq libttspico-utils espeak-ng gawk"
+  if [[ "$install_line" == "${expected_prefix}bluealsa${expected_suffix}" ]]; then
+    :
+  elif [[ "$install_line" == "${expected_prefix}bluez-alsa${expected_suffix}" ]]; then
+    :
+  else
+    fail "apt-get install not invoked with expected packages"
+  fi
   pass "apt-get commands captured"
 else
   fail "apt-get log missing"

@@ -159,6 +159,7 @@ To adjust LED behavior or frequency announcement phrasing, edit the scripts unde
 * **Frequency changes do not trigger** – Confirm that your device supports Bluetooth Absolute Volume and that `bt-volume-freqd.service` is running. Monitor logs with `sudo journalctl -u bt-volume-freqd.service`.
 * **RDS text missing** – Ensure your radio supports RDS. Inspect `/run/rds_ctl` activity and the `avrcp-rds.service` logs.
 * **LED does not respond** – Reboot once after installation to ensure the LED trigger changes take effect. Verify that `/usr/local/bin/ledctl.sh` can control the LED manually (e.g. `sudo /usr/local/bin/ledctl.sh on`).
+* **BlueALSA diagnostics** – Use `bluealsactl` (previously `bluealsa-cli`) to inspect PCM devices, e.g. `bluealsactl pcm-list`. The daemon binary is now `bluealsad`, so update any custom service overrides accordingly.
 
 ## Extending to AirPlay (RAOP)
 
