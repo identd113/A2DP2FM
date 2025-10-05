@@ -14,7 +14,7 @@ The installer is intended for a headless Raspberry Pi (no desktop environment) w
 * **Bluetooth setup for headless pairing** – Ensures the adapter is powered, discoverable, and pairable after every boot.
 * **A2DP audio to FM broadcast pipeline** – Captures audio via BlueALSA and feeds it directly into PiFmRds running on GPIO 4.
 * **Text-to-speech station announcements** – Uses `pico2wave` (or `espeak-ng` fallback) to speak the tuned frequency when it changes.
-* **Volume-based frequency changes** – Monitors Bluetooth absolute volume changes and repurposes the phone volume keys to bump the FM frequency by a configurable step.
+* **Volume-based frequency changes** – Monitors Bluetooth absolute volume so the phone volume keys bump the FM frequency by a configurable step while playback is paused (during playback they continue adjusting volume normally).
 * **AVRCP metadata to RDS** – Mirrors track metadata (Artist, Title, Album) into the RDS PS/RT fields.
 * **LED status feedback** – Reconfigures the Raspberry Pi ACT LED and provides visual cues for pairing, connection, streaming, and frequency adjustments.
 * **Offline-friendly boot** – Disables the "wait for network" delay so the Pi completes startup even without network connectivity.
@@ -108,7 +108,7 @@ Python dependencies.
 2. On your phone, enable Bluetooth and pair with the Raspberry Pi (default hostname `raspberrypi`). Ensure "Media Audio" (A2DP) is enabled for the connection.
 3. Tune a nearby FM radio to the configured frequency (default 87.9 MHz).
 4. Start playing audio on the phone. The Pi will stream the audio to PiFmRds, and you should hear it over FM.
-5. Use the phone's volume buttons to bump the broadcast frequency up or down by the configured step. When the frequency changes, the LED flashes three times and the TTS script announces the new frequency over the FM channel.
+5. Use the phone's volume buttons while playback is paused to bump the broadcast frequency up or down by the configured step. When audio is playing the buttons adjust volume normally. During a frequency change the LED flashes three times and the TTS script announces the new frequency over the FM channel.
 6. AVRCP metadata (Artist/Title/Album) is forwarded to RDS so compatible radios can display track information.
 
 ### LED behavior
