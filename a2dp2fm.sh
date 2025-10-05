@@ -196,6 +196,13 @@ else
 fi
 
 echo "==> Headless BT setup (discoverable + pairable on boot)"
+cat >/usr/local/sbin/bt-agent-wrapper.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /usr/bin/env bt-agent --capability=NoInputNoOutput "$@"
+EOF
+chmod +x /usr/local/sbin/bt-agent-wrapper.sh
+
 cat >/usr/local/sbin/bt-setup-bluetooth.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -212,8 +219,6 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^hciuart\.service'; then
   systemctl restart hciuart.service || true
 fi
 bluetoothctl <<'BCTL'
-agent on
-default-agent
 power on
 discoverable-timeout 0
 pairable-timeout 0
@@ -222,6 +227,20 @@ pairable on
 BCTL
 EOF
 chmod +x /usr/local/sbin/bt-setup-bluetooth.sh
+cat >/etc/systemd/system/bt-agent.service <<'EOF'
+[Unit]
+Description=Bluetooth headless pairing agent
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/bt-agent-wrapper.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
 cat >/etc/systemd/system/bt-setup.service <<'EOF'
 [Unit]
 Description=Bluetooth adapter headless setup (power on, agent, discoverable)
@@ -235,7 +254,8 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable bt-setup.service
+systemctl enable bt-agent.service bt-setup.service
+systemctl restart bt-agent.service || systemctl start bt-agent.service || true
 systemctl start bt-setup.service || true
 
 echo "==> Clone & build PiFmRds"
