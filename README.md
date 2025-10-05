@@ -48,17 +48,18 @@ Python dependencies.
 ## Installation
 
 1. **Run directly with `curl` (optional).** For a one-liner install on a freshly
-   provisioned Pi you can stream the script straight into `bash`:
+   provisioned Pi you can stream the script straight into `bash`. The commands
+   below use this repository as published by GitHub user `identd113`:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/<your-account>/A2DP2FM/main/a2dp2fm.sh \
+   curl -fsSL "https://raw.githubusercontent.com/identd113/A2DP2FM/main/a2dp2fm.sh" \
      | sudo bash -s --
    ```
 
    Append any CLI flags after the `--` if you want to override defaults, e.g.:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/<your-account>/A2DP2FM/main/a2dp2fm.sh \
+   curl -fsSL "https://raw.githubusercontent.com/identd113/A2DP2FM/main/a2dp2fm.sh" \
      | sudo bash -s -- --freq 88.1 --step 0.1
    ```
 
@@ -69,7 +70,7 @@ Python dependencies.
    move into the directory:
 
    ```bash
-   git clone https://github.com/<your-account>/A2DP2FM.git
+   git clone "https://github.com/identd113/A2DP2FM.git"
    cd A2DP2FM
    ```
 
