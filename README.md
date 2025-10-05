@@ -159,6 +159,24 @@ To adjust LED behavior or frequency announcement phrasing, edit the scripts unde
 * **RDS text missing** – Ensure your radio supports RDS. Inspect `/run/rds_ctl` activity and the `avrcp-rds.service` logs.
 * **LED does not respond** – Reboot once after installation to ensure the LED trigger changes take effect. Verify that `/usr/local/bin/ledctl.sh` can control the LED manually (e.g. `sudo /usr/local/bin/ledctl.sh on`).
 
+## Extending to AirPlay (RAOP)
+
+Bluetooth A2DP is the only audio input path the installer provisions today. Adding
+AirPlay reception involves introducing a RAOP server such as `shairport-sync`
+and plumbing its audio output into `pi_fm_rds`. Because the current
+`bt2fm.service` assumes it owns both capture and FM transmission, the cleanest
+approach is to treat AirPlay as a parallel pipeline with its own helper script
+and systemd unit. That script can subscribe to metadata from the AirPlay server
+and decide when to start or stop `pi_fm_rds` without racing the Bluetooth
+workflow.
+
+Attempting to merge Bluetooth and AirPlay into a single monolithic script would
+require arbitrating which source controls the transmitter, reconciling
+service-specific metadata hooks, and handling extra failure modes. Keeping the
+RAOP plumbing isolated lets you experiment without disrupting the proven A2DP
+experience; you can later add a lightweight coordinator (e.g. via systemd
+targets) if you want both inputs to coexist gracefully.
+
 ## Uninstallation
 
 There is no automated uninstaller, but you can remove the components manually:
