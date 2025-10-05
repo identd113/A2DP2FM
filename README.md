@@ -87,7 +87,7 @@ Python dependencies.
 
    * Installs Bluetooth, audio, PiFmRds build dependencies, speech synthesis utilities, and helper tools via `apt-get`.
    * Creates a `bt-setup.service` systemd unit that powers on the adapter, enables the agent, and sets the controller to be discoverable/pairable on boot.
-   * Clones PiFmRds into `/home/<pi-user>/PiFmRds` and builds `pi_fm_rds`.
+   * Clones PiFmRds into `/home/${SUDO_USER:-pi}/PiFmRds` (the invoking sudo user's home) and builds `pi_fm_rds`.
    * Stores runtime defaults in `/etc/default/bt2fm` using the values you provided.
    * Creates `/run/rds_ctl` FIFO for RDS commands.
    * Installs helper scripts under `/usr/local/bin/`:
