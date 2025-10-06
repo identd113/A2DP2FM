@@ -133,6 +133,20 @@ All major components run as systemd services:
 
 Use `systemctl` to monitor or control them, e.g. `sudo systemctl status bt2fm.service` or `sudo systemctl restart avrcp-rds.service`.
 
+## Uninstallation
+
+To remove the Bluetooth-to-FM setup and restore the Pi to its pre-installation state, rerun the installer with the `--uninstall`
+flag:
+
+```bash
+sudo bash a2dp2fm.sh --uninstall
+```
+
+The uninstall routine stops and disables all services created by the installer, deletes helper scripts under `/usr/local/bin/`
+and `/usr/local/sbin/`, removes `/etc/default/bt2fm`, and prunes the PiFmRds clone (if it points to the upstream repository).
+It also removes the ACT LED `dtparam` overrides, attempts to restore the default boot-wait behaviour, and clears the managed
+BlueALSA systemd unit when present.
+
 ## Configuration
 
 Runtime defaults are stored in `/etc/default/bt2fm`. You can edit this file to change the FM frequency range and step size after installation:
@@ -179,9 +193,9 @@ RAOP plumbing isolated lets you experiment without disrupting the proven A2DP
 experience; you can later add a lightweight coordinator (e.g. via systemd
 targets) if you want both inputs to coexist gracefully.
 
-## Uninstallation
+### Manual cleanup (if automation cannot be used)
 
-There is no automated uninstaller, but you can remove the components manually:
+If the automated uninstaller cannot be run (e.g. the script file has been deleted), you can replicate its actions manually:
 
 1. Stop and disable the services:
 
@@ -193,8 +207,8 @@ There is no automated uninstaller, but you can remove the components manually:
 
    ```bash
    sudo rm /usr/local/bin/bt2fm.sh /usr/local/bin/fm_announce.sh \
-           /usr/local/bin/bt-volume-freqd.sh /usr/local/bin/avrcp_rds.py \
-           /usr/local/bin/ledctl.sh /usr/local/bin/led-statusd.sh
+          /usr/local/bin/bt-volume-freqd.sh /usr/local/bin/avrcp_rds.py \
+          /usr/local/bin/ledctl.sh /usr/local/bin/led-statusd.sh
    ```
 
 3. Remove unit files and reload systemd:
@@ -204,9 +218,9 @@ There is no automated uninstaller, but you can remove the components manually:
    sudo systemctl daemon-reload
    ```
 
-4. Optionally delete `/etc/default/bt2fm`, `/run/rds_ctl`, and the PiFmRds source directory.
+4. Optionally delete `/etc/default/bt2fm`, `/run/rds_ctl`, the PiFmRds source directory, and remove `bluealsa.service` if it was added under `/etc/systemd/system/`.
 
-5. Revert LED configuration by editing `/boot/config.txt` and removing the added `dtparam=act_led_trigger=none` and `dtparam=act_led_activelow=off` lines. Reboot to apply.
+5. Revert LED configuration by editing `/boot/config.txt` (and `/boot/firmware/config.txt` when present) to remove any `dtparam=act_led_trigger=none` and `dtparam=act_led_activelow=off` lines. Reboot to apply.
 
 ## License
 

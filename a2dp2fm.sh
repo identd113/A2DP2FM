@@ -7,9 +7,10 @@
 set -euo pipefail
 
 # ---- Defaults (override with flags) ----
-FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"
+FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"; UNINSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --uninstall) UNINSTALL=1; shift;;
     --freq) FREQ="$2"; shift 2;;
     --step) STEP="$2"; shift 2;;
     --min)  FMIN="$2"; shift 2;;
@@ -30,6 +31,92 @@ if [[ -z "${PI_HOME:-}" ]]; then
 fi
 PIFM_DIR="$PI_HOME/PiFmRds"
 RDSCTL="/run/rds_ctl"
+CFG_C1="/boot/config.txt"; CFG_C2="/boot/firmware/config.txt"
+BLUEZ_ALSA_SRC_DIR="/usr/local/src/bluez-alsa"
+BLUEZ_ALSA_REPO="https://github.com/Arkq/bluez-alsa.git"
+
+perform_uninstall() {
+  echo "==> Uninstalling Bluetooth A2DP -> FM setup"
+  local services=(
+    bt2fm.service bt-volume-freqd.service avrcp-rds.service led-statusd.service
+    bt-agent.service bt-setup.service
+  )
+  for svc in "${services[@]}"; do
+    systemctl disable --now "$svc" 2>/dev/null || true
+  done
+
+  local unit_path
+  for svc in "${services[@]}"; do
+    unit_path="/etc/systemd/system/$svc"
+    if [[ -f "$unit_path" ]] && grep -q 'Managed by a2dp2fm' "$unit_path"; then
+      rm -f "$unit_path"
+    fi
+  done
+  unit_path="/etc/systemd/system/bluealsa.service"
+  if [[ -f "$unit_path" ]] && grep -q 'Managed by a2dp2fm' "$unit_path"; then
+    rm -f "$unit_path"
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+
+  local paths=(
+    /usr/local/bin/bt2fm.sh
+    /usr/local/bin/fm_announce.sh
+    /usr/local/bin/bt-volume-freqd.sh
+    /usr/local/bin/avrcp_rds.py
+    /usr/local/bin/ledctl.sh
+    /usr/local/bin/led-statusd.sh
+    /usr/local/sbin/bt-agent-wrapper.sh
+    /usr/local/sbin/bt-setup-bluetooth.sh
+    /etc/default/bt2fm
+    "$RDSCTL"
+    /run/fm_announce.wav
+    /run/bt2fm.volume
+    /run/bt2fm.playstate
+  )
+  for path in "${paths[@]}"; do
+    rm -f "$path"
+  done
+
+  if [[ -d "$PIFM_DIR" ]]; then
+    if sudo -u "$PI_USER" git -C "$PIFM_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      local origin="$(sudo -u "$PI_USER" git -C "$PIFM_DIR" remote get-url origin 2>/dev/null || true)"
+      if [[ "$origin" == "https://github.com/ChristopheJacquet/PiFmRds.git" ]]; then
+        rm -rf "$PIFM_DIR"
+      fi
+    else
+      rm -rf "$PIFM_DIR"
+    fi
+  fi
+  rm -rf "$BLUEZ_ALSA_SRC_DIR"
+
+  local cfg
+  for cfg in "$CFG_C1" "$CFG_C2"; do
+    [[ -f "$cfg" ]] || continue
+    sed -i '/^dtparam=act_led_trigger=none$/d' "$cfg" || true
+    sed -i '/^dtparam=act_led_activelow=off$/d' "$cfg" || true
+  done
+
+  if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_boot_wait 1 || true
+  else
+    local wait_units=(
+      systemd-networkd-wait-online.service
+      NetworkManager-wait-online.service
+      dhcpcd-wait-online.service
+    )
+    for unit in "${wait_units[@]}"; do
+      systemctl unmask "$unit" 2>/dev/null || true
+      systemctl enable "$unit" 2>/dev/null || true
+    done
+  fi
+
+  echo "==> Uninstall complete"
+}
+
+if (( UNINSTALL )); then
+  perform_uninstall
+  exit 0
+fi
 
 echo "==> Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
 export DEBIAN_FRONTEND=noninteractive
@@ -65,9 +152,6 @@ if [[ -n "$BLUEALSA_PKG" ]]; then
 fi
 
 apt-get install -y "${APT_PACKAGES[@]}"
-
-BLUEZ_ALSA_SRC_DIR="/usr/local/src/bluez-alsa"
-BLUEZ_ALSA_REPO="https://github.com/Arkq/bluez-alsa.git"
 
 bluealsa_daemon_path() {
   local candidate path=""
@@ -150,6 +234,7 @@ ensure_bluealsa_service() {
 
   if [[ -z "$current_fragment" || "$current_exec_path" != "$daemon" ]]; then
     cat >"$desired_unit_path" <<EOF
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=BlueALSA Bluetooth audio daemon
 After=bluetooth.service
@@ -228,6 +313,7 @@ BCTL
 EOF
 chmod +x /usr/local/sbin/bt-setup-bluetooth.sh
 cat >/etc/systemd/system/bt-agent.service <<'EOF'
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=Bluetooth headless pairing agent
 After=bluetooth.service
@@ -242,6 +328,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 cat >/etc/systemd/system/bt-setup.service <<'EOF'
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=Bluetooth adapter headless setup (power on, agent, discoverable)
 After=bluetooth.service
@@ -321,6 +408,7 @@ chmod +x /usr/local/bin/bt2fm.sh
 chown "$PI_USER":"$PI_USER" /usr/local/bin/bt2fm.sh
 
 cat >/etc/systemd/system/bt2fm.service <<EOF
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=Bluetooth A2DP -> PiFmRds (FM on GPIO4)
 After=bluetooth.service bt-setup.service
@@ -428,6 +516,7 @@ chmod +x /usr/local/bin/bt-volume-freqd.sh
 chown "$PI_USER":"$PI_USER" /usr/local/bin/bt-volume-freqd.sh
 
 cat >/etc/systemd/system/bt-volume-freqd.service <<'VOLSRV'
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=Change FM frequency using phone volume keys (BlueZ Absolute Volume)
 After=bluetooth.service bt-setup.service
@@ -488,6 +577,7 @@ chmod +x /usr/local/bin/avrcp_rds.py
 chown "$PI_USER":"$PI_USER" /usr/local/bin/avrcp_rds.py
 
 cat >/etc/systemd/system/avrcp-rds.service <<'AVSRV'
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=Update RDS PS/RT from Bluetooth AVRCP track metadata
 After=bluetooth.service bt2fm.service
@@ -503,7 +593,6 @@ WantedBy=multi-user.target
 AVSRV
 
 echo "==> Take over ACT LED (software control) + LED helpers/services"
-CFG_C1="/boot/config.txt"; CFG_C2="/boot/firmware/config.txt"
 for CFG in "$CFG_C1" "$CFG_C2"; do
   [[ -f "$CFG" ]] || continue
   sed -i '/^dtparam=act_led_trigger=/d' "$CFG" || true
@@ -559,6 +648,7 @@ LEDD
 chmod +x /usr/local/bin/led-statusd.sh
 
 cat >/etc/systemd/system/led-statusd.service <<'LEDSVC'
+# Managed by a2dp2fm (installer script)
 [Unit]
 Description=On-board LED status (pairing/connected/streaming)
 After=bluetooth.service bt-setup.service
