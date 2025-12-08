@@ -29,6 +29,16 @@ The installer is intended for a headless Raspberry Pi (no desktop environment) w
 
 > ⚠️ **Regulatory notice:** Broadcasting FM radio may be regulated in your region. Use low power, short antennas, and comply with local laws.
 
+## Quick setup outline
+
+Follow these high-level steps to get on-air quickly:
+
+1. **Wire the antenna.** Attach a 10–20 cm insulated wire to GPIO 4 on the 40-pin header (BCM GPIO4, physical pin 7). This pin is the RF output driven by PiFmRds. Keep the wire short to limit range, and avoid routing it near other antennas. No additional wiring is required; ground is provided through the Pi.
+2. **Prepare the Pi.** Install Raspberry Pi OS Lite on an SD card, boot the Pi headless, and ensure it has network access for package installs and Git clone operations.
+3. **Run the installer.** Execute the one-liner `curl ... | sudo bash -s --` or clone the repo and run `sudo bash a2dp2fm.sh` with any desired frequency flags.
+4. **Reboot if needed.** A reboot finalizes ACT LED control on some boards and ensures all services start cleanly.
+5. **Pair and play.** Pair your phone over Bluetooth, tune a nearby radio to your configured frequency, and start streaming audio.
+
 ## Software prerequisites
 
 The script targets Raspberry Pi OS (Debian-based). It expects:
