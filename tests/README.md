@@ -21,6 +21,26 @@ validated.
 Each shim logs its invocations to `$A2DP2FM_STUB_LOG_DIR` so you can audit what would
 have been executed on a real Raspberry Pi. Remove the directory afterwards if desired.
 
+## Raspberry Pi–like container for automated checks
+
+The repository includes a slim ARMv7 container to mimic a Raspberry Pi userspace
+while running on amd64 hosts via QEMU. Build and run the installer test inside the
+container with:
+
+```bash
+./tests/run-in-docker.sh
+```
+
+Environment variables to tweak the run:
+
+* `A2DP2FM_RPI_IMAGE` – Override the Docker image tag (default: `a2dp2fm-rpi-sim`).
+* `DOCKER_BUILD_ARGS` – Extra arguments forwarded to `docker build`.
+* `DOCKER_RUN_ARGS` – Extra arguments forwarded to `docker run`.
+
+The container uses the stubbed utilities in `tests/bin`, runs the installer against
+an ARMv7 Debian Bookworm base, and verifies that expected artifacts are emitted. This
+is the fastest way to sanity-check changes when you do not have a physical Pi handy.
+
 ## Automated merge test
 
 Run `tests/run-install-test.sh` to execute the installer against the shims and verify
