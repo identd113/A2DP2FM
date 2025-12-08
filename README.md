@@ -39,6 +39,10 @@ The script targets Raspberry Pi OS (Debian-based). It expects:
 
 All required packages are installed automatically via `apt-get` when you run the installer.
 
+### OS compatibility (Trixie and earlier)
+
+The installer detects the underlying Raspberry Pi OS/Debian codename and prints it during execution. It is validated on Raspberry Pi OS **Trixie**, **Bookworm**, and **Bullseye** (and should continue to work on earlier codenames such as Buster). Newer or derivative distributions may still succeed, but will emit a warning so you know compatibility has not been verified. Both `/boot/config.txt` and `/boot/firmware/config.txt` are updated, covering the boot layout used by recent Raspberry Pi OS releases.
+
 If you want to work with the Python helper (`avrcp_rds.py`) outside of the
 installer flow, the Python dependencies are listed in `requirements.txt`. The
 modules are shipped by Raspberry Pi OS via `apt-get` (`python3-dbus` and
