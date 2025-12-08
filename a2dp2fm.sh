@@ -46,6 +46,7 @@ PI_HOME="$(getent passwd "$PI_USER" | cut -d: -f6 2>/dev/null || true)"
 if [[ -z "${PI_HOME:-}" ]]; then
   PI_HOME="/home/$PI_USER"
 fi
+GIT_CLONE_CMD="${A2DP2FM_GIT_CLONE_CMD:-git}"
 PIFM_DIR="$PI_HOME/PiFmRds"
 RDSCTL="/run/rds_ctl"
 CFG_C1="/boot/config.txt"; CFG_C2="/boot/firmware/config.txt"
@@ -193,7 +194,7 @@ install_bluealsa_from_source() {
   echo "==> Build BlueALSA from source (Arkq/bluez-alsa)"
   mkdir -p "$(dirname "$dir")"
   rm -rf "$dir"
-  git clone --depth 1 "$repo" "$dir"
+  "$GIT_CLONE_CMD" clone --depth 1 "$repo" "$dir"
   pushd "$dir" >/dev/null
   if [[ -x ./bootstrap ]]; then
     ./bootstrap
@@ -364,7 +365,7 @@ systemctl start bt-setup.service || true
 
 echo "==> Clone & build PiFmRds"
 if [[ ! -d "$PIFM_DIR" ]]; then
-  sudo -u "$PI_USER" git clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
+  sudo -u "$PI_USER" "$GIT_CLONE_CMD" clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
 fi
 pushd "$PIFM_DIR/src" >/dev/null
 sudo -u "$PI_USER" make clean || true
