@@ -1,0 +1,33 @@
+# Lightweight Raspberry Pi–like container for exercising the installer under QEMU
+#
+# This image targets ARMv7 (32-bit) to mirror common Raspberry Pi builds while
+# remaining runnable on amd64 hosts via qemu-user-static. It intentionally keeps
+# the package set small because the installer pulls its own dependencies.
+
+FROM multiarch/qemu-user-static:latest AS qemu
+
+FROM --platform=linux/arm/v7 debian:bookworm-slim
+
+# Copy the QEMU emulator so amd64 hosts can run the ARMv7 userspace.
+COPY --from=qemu /usr/bin/qemu-arm-static /usr/bin/
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Core utilities plus sudo (the installer expects sudo semantics when invoked as root).
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends \
+       bash \
+       sudo \
+       ca-certificates \
+       curl \
+       git \
+       passwd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Provide a place for stub logs when running tests and make sure the default
+# /run directory exists for FIFO creation inside containers.
+RUN mkdir -p /var/log/a2dp2fm /run
+
+WORKDIR /workspace
+
+ENTRYPOINT ["bash"]
