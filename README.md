@@ -39,6 +39,20 @@ The script targets Raspberry Pi OS (Debian-based). It expects:
 
 All required packages are installed automatically via `apt-get` when you run the installer.
 
+To emulate an install inside a network-restricted container (e.g. CI), you can point the
+installer at the bundled offline-friendly Git stub while keeping the other shim utilities
+on `PATH`:
+
+```bash
+A2DP2FM_STUB_LOG_DIR=$(mktemp -d) \
+  PATH="$(pwd)/tests/bin:$PATH" \
+  A2DP2FM_GIT_CLONE_CMD="$(pwd)/tests/bin/git-clone-stub" \
+  SUDO_USER=pi sudo ./a2dp2fm.sh --freq 99.1
+```
+
+The stub satisfies `git clone` calls without reaching the public internet while logging
+activity under `$A2DP2FM_STUB_LOG_DIR`.
+
 ### OS compatibility (Trixie and earlier)
 
 The installer detects the underlying Raspberry Pi OS/Debian codename and prints it during execution. It is validated on Raspberry Pi OS **Trixie**, **Bookworm**, and **Bullseye** (and should continue to work on earlier codenames such as Buster). Newer or derivative distributions may still succeed, but will emit a warning so you know compatibility has not been verified. Both `/boot/config.txt` and `/boot/firmware/config.txt` are updated, covering the boot layout used by recent Raspberry Pi OS releases.
