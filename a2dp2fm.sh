@@ -24,6 +24,23 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+OS_CODENAME=""
+if [[ -r /etc/os-release ]]; then
+  OS_CODENAME="$(awk -F= '/^VERSION_CODENAME=/{print tolower($2)}' /etc/os-release)"
+fi
+if [[ -n "$OS_CODENAME" ]]; then
+  case "$OS_CODENAME" in
+    trixie|bookworm|bullseye|buster)
+      echo "==> Detected Raspberry Pi OS/Debian codename: $OS_CODENAME"
+      ;;
+    *)
+      echo "Warning: Unverified OS codename ($OS_CODENAME). Script is tested on Raspberry Pi OS Trixie/Bookworm/Bullseye." >&2
+      ;;
+  esac
+else
+  echo "Warning: Unable to detect OS codename from /etc/os-release; continuing with defaults." >&2
+fi
+
 PI_USER="${SUDO_USER:-pi}"
 PI_HOME="$(getent passwd "$PI_USER" | cut -d: -f6 2>/dev/null || true)"
 if [[ -z "${PI_HOME:-}" ]]; then
