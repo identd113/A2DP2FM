@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # ---- Defaults (override with flags) ----
-FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"; UNINSTALL=0
+FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"; UNINSTALL=0; DRY_RUN=0; VERBOSE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --uninstall) UNINSTALL=1; shift;;
@@ -15,14 +15,29 @@ while [[ $# -gt 0 ]]; do
     --step) STEP="$2"; shift 2;;
     --min)  FMIN="$2"; shift 2;;
     --max)  FMAX="$2"; shift 2;;
-    *) echo "Unknown arg: $1"; exit 1;;
+    --dry-run) DRY_RUN=1; shift;;
+    --verbose) VERBOSE=1; shift;;
+    *) echo "Usage: sudo bash $0 [--freq 87.9] [--step 0.2] [--min 87.7] [--max 107.9] [--dry-run] [--verbose] [--uninstall]"; exit 1;;
   esac
 done
 
+log()  { echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"; }
+vlog() { (( VERBOSE )) && echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [verbose] $*" || true; }
+maybe_run() { if (( DRY_RUN )); then echo "[dry-run] $*"; else "$@"; fi; }
+finalize_script() { local path="$1"; chmod +x "$path"; chown "$PI_USER":"$PI_USER" "$path" || true; vlog "Installed $path"; }
+
 if [[ $EUID -ne 0 ]]; then
-  echo "Run as root: sudo bash $0"
+  log "ERROR: Run as root: sudo bash $0"
   exit 1
 fi
+
+# ---- Path constants ----
+BIN_DIR="/usr/local/bin"
+SBIN_DIR="/usr/local/sbin"
+SYSUNIT_DIR="/etc/systemd/system"
+
+# ---- Install tracking ----
+declare -a INSTALL_SUMMARY=()
 
 OS_CODENAME=""
 if [[ -r /etc/os-release ]]; then
@@ -31,14 +46,14 @@ fi
 if [[ -n "$OS_CODENAME" ]]; then
   case "$OS_CODENAME" in
     trixie|bookworm|bullseye|buster)
-      echo "==> Detected Raspberry Pi OS/Debian codename: $OS_CODENAME"
+      log "Detected Raspberry Pi OS/Debian codename: $OS_CODENAME"
       ;;
     *)
-      echo "Warning: Unverified OS codename ($OS_CODENAME). Script is tested on Raspberry Pi OS Trixie/Bookworm/Bullseye." >&2
+      log "Warning: Unverified OS codename ($OS_CODENAME). Script is tested on Raspberry Pi OS Trixie/Bookworm/Bullseye." >&2
       ;;
   esac
 else
-  echo "Warning: Unable to detect OS codename from /etc/os-release; continuing with defaults." >&2
+  log "Warning: Unable to detect OS codename from /etc/os-release; continuing with defaults." >&2
 fi
 
 PI_USER="${SUDO_USER:-pi}"
@@ -53,8 +68,26 @@ CFG_C1="/boot/config.txt"; CFG_C2="/boot/firmware/config.txt"
 BLUEZ_ALSA_SRC_DIR="/usr/local/src/bluez-alsa"
 BLUEZ_ALSA_REPO="https://github.com/Arkq/bluez-alsa.git"
 
+validate_mhz() {
+  local name="$1" val="$2"
+  [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { log "ERROR: $name must be a number (got: $val)"; exit 1; }
+}
+
+check_required_commands() {
+  local missing=() cmd
+  for cmd in git make gcc awk sed; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  if (( ${#missing[@]} )); then
+    log "ERROR: Missing required commands: ${missing[*]}" >&2
+    log "Install them first (e.g. apt-get install build-essential git)" >&2
+    exit 1
+  fi
+  vlog "Pre-flight check passed: git make gcc awk sed all present"
+}
+
 perform_uninstall() {
-  echo "==> Uninstalling Bluetooth A2DP -> FM setup"
+  log "Uninstalling Bluetooth A2DP -> FM setup"
   local services=(
     bt2fm.service bt-volume-freqd.service avrcp-rds.service led-statusd.service
     bt-agent.service bt-setup.service
@@ -110,8 +143,9 @@ perform_uninstall() {
   local cfg
   for cfg in "$CFG_C1" "$CFG_C2"; do
     [[ -f "$cfg" ]] || continue
-    sed -i '/^dtparam=act_led_trigger=none$/d' "$cfg" || true
-    sed -i '/^dtparam=act_led_activelow=off$/d' "$cfg" || true
+    sed -i.bak '/^dtparam=act_led_trigger=none$/d' "$cfg" || true
+    sed -i.bak '/^dtparam=act_led_activelow=off$/d' "$cfg" || true
+    rm -f "${cfg}.bak" || true
   done
 
   if command -v raspi-config >/dev/null 2>&1; then
@@ -128,15 +162,35 @@ perform_uninstall() {
     done
   fi
 
-  echo "==> Uninstall complete"
+  log "Uninstall complete"
 }
+
+validate_mhz "--freq" "$FREQ"
+validate_mhz "--step" "$STEP"
+validate_mhz "--min"  "$FMIN"
+validate_mhz "--max"  "$FMAX"
+[[ "$(awk -v a="$FMIN" -v b="$FMAX" 'BEGIN{print (a < b)}')" == "1" ]] || { log "ERROR: --min ($FMIN) must be less than --max ($FMAX)"; exit 1; }
 
 if (( UNINSTALL )); then
   perform_uninstall
   exit 0
 fi
 
-echo "==> Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
+check_required_commands
+
+if (( DRY_RUN )); then
+  log "DRY RUN: no changes will be made"
+  log "Would install packages: bluez bluez-tools alsa-utils sox jq libttspico-utils espeak-ng and build tools"
+  log "Would build BlueALSA (from source or use package)"
+  log "Would build PiFmRds in: $PIFM_DIR"
+  log "Would create /etc/default/bt2fm with FREQ=$FREQ STEP=$STEP FMIN=$FMIN FMAX=$FMAX"
+  log "Would deploy helper scripts to $BIN_DIR and $SBIN_DIR"
+  log "Would register 6 systemd units: bt-setup bt-agent bt2fm bt-volume-freqd avrcp-rds led-statusd bluealsa"
+  log "Would configure GPIO4 and ACT LED"
+  exit 0
+fi
+
+log "Apt install (Bluetooth, audio, PiFmRds deps, TTS, tools)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 
@@ -170,6 +224,7 @@ if [[ -n "$BLUEALSA_PKG" ]]; then
 fi
 
 apt-get install -y "${APT_PACKAGES[@]}"
+INSTALL_SUMMARY+=("Apt packages installed: ${#APT_PACKAGES[@]} packages")
 
 bluealsa_daemon_path() {
   local candidate path=""
@@ -191,7 +246,7 @@ bluealsa_daemon_path() {
 install_bluealsa_from_source() {
   local repo="$BLUEZ_ALSA_REPO"
   local dir="$BLUEZ_ALSA_SRC_DIR"
-  echo "==> Build BlueALSA from source (Arkq/bluez-alsa)"
+  log "Build BlueALSA from source (Arkq/bluez-alsa)"
   mkdir -p "$(dirname "$dir")"
   rm -rf "$dir"
   "$GIT_CLONE_CMD" clone --depth 1 "$repo" "$dir"
@@ -225,7 +280,7 @@ ensure_bluealsa_service() {
   local daemon
   daemon="$(bluealsa_daemon_path || true)"
   if [[ -z "$daemon" ]]; then
-    echo "Warning: BlueALSA daemon binary unavailable; skipping service setup." >&2
+    log "Warning: BlueALSA daemon binary unavailable; skipping service setup." >&2
     return
   fi
   local current_fragment=""
@@ -277,16 +332,18 @@ EOF
 
 BLUEALSA_BIN_PRESENT="$(bluealsa_daemon_path || true)"
 if [[ -n "$BLUEALSA_PKG" ]]; then
-  echo "==> Using apt BlueALSA package: $BLUEALSA_PKG"
+  log "Using apt BlueALSA package: $BLUEALSA_PKG"
+  INSTALL_SUMMARY+=("BlueALSA installed from apt")
 elif [[ -n "$BLUEALSA_BIN_PRESENT" ]]; then
-  echo "==> BlueALSA already present; skipping source build"
+  log "BlueALSA already present; skipping source build"
 else
   install_bluealsa_from_source
+  INSTALL_SUMMARY+=("BlueALSA built from source")
 fi
 
 ensure_bluealsa_service
 
-echo "==> Skip boot wait for network (offline-friendly)"
+log "Skip boot wait for network (offline-friendly)"
 if command -v raspi-config >/dev/null 2>&1; then
   raspi-config nonint do_boot_wait 0 || true
 else
@@ -298,7 +355,7 @@ else
   systemctl mask dhcpcd-wait-online.service 2>/dev/null || true
 fi
 
-echo "==> Headless BT setup (discoverable + pairable on boot)"
+log "Headless BT setup (discoverable + pairable on boot)"
 cat >/usr/local/sbin/bt-agent-wrapper.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -363,7 +420,7 @@ systemctl enable bt-agent.service bt-setup.service
 systemctl restart bt-agent.service || systemctl start bt-agent.service || true
 systemctl start bt-setup.service || true
 
-echo "==> Clone & build PiFmRds"
+log "Clone & build PiFmRds"
 if [[ ! -d "$PIFM_DIR" ]]; then
   sudo -u "$PI_USER" "$GIT_CLONE_CMD" clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
 fi
@@ -371,9 +428,11 @@ pushd "$PIFM_DIR/src" >/dev/null
 sudo -u "$PI_USER" make clean || true
 sudo -u "$PI_USER" make
 popd >/dev/null
+INSTALL_SUMMARY+=("PiFmRds built in $PIFM_DIR/src")
 
-echo "==> Runtime config: /etc/default/bt2fm"
-cat >/etc/default/bt2fm <<EOF
+log "Runtime config: /etc/default/bt2fm"
+_bt2fm_cfg="$(mktemp)" || { log "ERROR: Failed to create temp file"; exit 1; }
+cat >"$_bt2fm_cfg" <<EOF
 FREQ=$FREQ
 STEP=$STEP
 FMIN=$FMIN
@@ -381,15 +440,17 @@ FMAX=$FMAX
 PI_USER="$PI_USER"
 PI_HOME="$PI_HOME"
 EOF
+mv "$_bt2fm_cfg" /etc/default/bt2fm
+INSTALL_SUMMARY+=("Runtime config written to /etc/default/bt2fm")
 
-echo "==> Prepare RDS control FIFO: $RDSCTL"
+log "Prepare RDS control FIFO: $RDSCTL"
 mkdir -p /run
 rm -f "$RDSCTL" || true
 mkfifo "$RDSCTL"
 chown "$PI_USER":"$PI_USER" "$RDSCTL" || true
 
-echo "==> Bluetooth->FM pipeline (PiFmRds, stdin audio, RDS FIFO)"
-cat >/usr/local/bin/bt2fm.sh <<'BTFM'
+log "Bluetooth->FM pipeline (PiFmRds, stdin audio, RDS FIFO)"
+cat >"$BIN_DIR/bt2fm.sh" <<'BTFM'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
@@ -410,6 +471,7 @@ for i in {1..120}; do
   if arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES"; then
     break
   fi
+  echo "Waiting for BlueALSA... attempt $i/120" >&2
   sleep 2
 done
 arecord -L 2>/dev/null | grep -Eq "$BLUEALSA_NAMES" || exit 0
@@ -422,10 +484,10 @@ fi
 arecord -D "${PCM_PREFIX}:PROFILE=a2dp" -f S16_LE -r 44100 -c 2 \
   | sudo "$PIFM" -freq "$CURF" -ps "$PSDEF" -rt "$RTDEF" -ctl "$RDSCTL" -audio -
 BTFM
-chmod +x /usr/local/bin/bt2fm.sh
-chown "$PI_USER":"$PI_USER" /usr/local/bin/bt2fm.sh
+finalize_script "$BIN_DIR/bt2fm.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/bt2fm.sh")
 
-cat >/etc/systemd/system/bt2fm.service <<EOF
+cat >"$SYSUNIT_DIR/bt2fm.service" <<EOF
 # Managed by a2dp2fm (installer script)
 [Unit]
 Description=Bluetooth A2DP -> PiFmRds (FM on GPIO4)
@@ -442,8 +504,8 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-echo "==> TTS announcer (speaks station, then resumes stream)"
-cat >/usr/local/bin/fm_announce.sh <<'FANN'
+log "TTS announcer (speaks station, then resumes stream)"
+cat >"$BIN_DIR/fm_announce.sh" <<'FANN'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
@@ -469,11 +531,11 @@ sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV"
 sleep 0.5
 systemctl start bt2fm.service >/dev/null 2>&1 || true
 FANN
-chmod +x /usr/local/bin/fm_announce.sh
-chown "$PI_USER":"$PI_USER" /usr/local/bin/fm_announce.sh
+finalize_script "$BIN_DIR/fm_announce.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/fm_announce.sh")
 
-echo "==> Volume-key frequency daemon"
-cat >/usr/local/bin/bt-volume-freqd.sh <<'BVOLD'
+log "Volume-key frequency daemon"
+cat >"$BIN_DIR/bt-volume-freqd.sh" <<'BVOLD'
 #!/usr/bin/env bash
 set -euo pipefail
 source /etc/default/bt2fm
@@ -530,10 +592,10 @@ dbus-monitor --system "type='signal',sender='org.bluez',interface='org.freedeskt
     esac
   done
 BVOLD
-chmod +x /usr/local/bin/bt-volume-freqd.sh
-chown "$PI_USER":"$PI_USER" /usr/local/bin/bt-volume-freqd.sh
+finalize_script "$BIN_DIR/bt-volume-freqd.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/bt-volume-freqd.sh")
 
-cat >/etc/systemd/system/bt-volume-freqd.service <<'VOLSRV'
+cat >"$SYSUNIT_DIR/bt-volume-freqd.service" <<'VOLSRV'
 # Managed by a2dp2fm (installer script)
 [Unit]
 Description=Change FM frequency using phone volume keys (BlueZ Absolute Volume)
@@ -550,31 +612,41 @@ RestartSec=1
 WantedBy=multi-user.target
 VOLSRV
 
-echo "==> AVRCP -> RDS (PS/RT) daemon"
-cat >/usr/local/bin/avrcp_rds.py <<'PYAV'
+log "AVRCP -> RDS (PS/RT) daemon"
+cat >"$BIN_DIR/avrcp_rds.py" <<'PYAV'
 #!/usr/bin/env python3
-import dbus, gi, re
+"""AVRCP metadata to RDS PS/RT daemon."""
+import dbus, gi, logging, re
 gi.require_version('GLib', '2.0')
 from gi.repository import GLib
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 RDSCTL="/run/rds_ctl"
-def safe_ps(s):
+
+def safe_ps(s: str) -> str:
+  """Sanitize and truncate station name for RDS PS field (max 8 chars)."""
   s=(s or "").strip()
   if not s: return "BT-PI"
   s=re.sub(r"[^A-Za-z0-9 -]","",s)
   return (s[:8] or "BT-PI")
-def safe_rt(title,artist,album):
+def safe_rt(title: str, artist: str, album: str) -> str:
+  """Sanitize and format track info for RDS RT field (max 64 chars)."""
   parts=[p for p in [artist,title] if p]
   txt=" - ".join(parts) if parts else (title or artist or "Bluetooth audio")
   if album and len(txt)<48: txt += " \u2022 "+album
   txt=re.sub(r"[\r\n\t]+"," ",txt).strip()
   return txt[:64]
-def write_rds(ps=None, rt=None):
+def write_rds(ps: str = None, rt: str = None) -> None:
+  """Write PS/RT commands to RDS FIFO."""
   try:
     with open(RDSCTL,"w") as f:
       if ps is not None: f.write(f"PS {ps}\n")
       if rt is not None: f.write(f"RT {rt}\n")
-  except Exception: pass
-def on_props_changed(interface, changed, invalidated, path):
+  except Exception as e:
+    logger.warning(f"Failed to write RDS FIFO: {e}")
+def on_props_changed(interface: str, changed: dict, invalidated: list, path: str) -> None:
+  """Handle BlueZ MediaPlayer1 property changes."""
   if interface!="org.bluez.MediaPlayer1": return
   if "Track" in changed:
     md=changed["Track"]
@@ -591,10 +663,10 @@ def main():
   GLib.MainLoop().run()
 if __name__=="__main__": main()
 PYAV
-chmod +x /usr/local/bin/avrcp_rds.py
-chown "$PI_USER":"$PI_USER" /usr/local/bin/avrcp_rds.py
+finalize_script "$BIN_DIR/avrcp_rds.py"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/avrcp_rds.py")
 
-cat >/etc/systemd/system/avrcp-rds.service <<'AVSRV'
+cat >"$SYSUNIT_DIR/avrcp-rds.service" <<'AVSRV'
 # Managed by a2dp2fm (installer script)
 [Unit]
 Description=Update RDS PS/RT from Bluetooth AVRCP track metadata
@@ -610,16 +682,17 @@ RestartSec=2
 WantedBy=multi-user.target
 AVSRV
 
-echo "==> Take over ACT LED (software control) + LED helpers/services"
+log "Take over ACT LED (software control) + LED helpers/services"
 for CFG in "$CFG_C1" "$CFG_C2"; do
   [[ -f "$CFG" ]] || continue
-  sed -i '/^dtparam=act_led_trigger=/d' "$CFG" || true
-  sed -i '/^dtparam=act_led_activelow=/d' "$CFG" || true
+  sed -i.bak '/^dtparam=act_led_trigger=/d' "$CFG" || true
+  sed -i.bak '/^dtparam=act_led_activelow=/d' "$CFG" || true
+  rm -f "${CFG}.bak" || true
   echo 'dtparam=act_led_trigger=none' >> "$CFG"
   echo 'dtparam=act_led_activelow=off' >> "$CFG"
 done
 
-cat >/usr/local/bin/ledctl.sh <<'LEDCTL'
+cat >"$BIN_DIR/ledctl.sh" <<'LEDCTL'
 #!/usr/bin/env bash
 set -euo pipefail
 LED="/sys/class/leds/led0"; TR="$LED/trigger"; BR="$LED/brightness"
@@ -635,9 +708,10 @@ double(){ on; sleep 0.12; off; sleep 0.12; on; sleep 0.12; off; }
 flash3(){ for i in 1 2 3; do blink_for 180 180; sleep 0.06; done; }
 case "${1:-}" in on|off|slow|fast|double|flash3) "$@";; *) echo "Usage: ledctl.sh {on|off|slow|double|flash3}";; esac
 LEDCTL
-chmod +x /usr/local/bin/ledctl.sh
+finalize_script "$BIN_DIR/ledctl.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/ledctl.sh")
 
-cat >/usr/local/bin/led-statusd.sh <<'LEDD'
+cat >"$BIN_DIR/led-statusd.sh" <<'LEDD'
 #!/usr/bin/env bash
 set -euo pipefail
 is_discoverable(){ bluetoothctl show 2>/dev/null | awk '/Discoverable:/{print $2}' | grep -q yes; }
@@ -663,9 +737,10 @@ while true; do
   fi
 done
 LEDD
-chmod +x /usr/local/bin/led-statusd.sh
+finalize_script "$BIN_DIR/led-statusd.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/led-statusd.sh")
 
-cat >/etc/systemd/system/led-statusd.service <<'LEDSVC'
+cat >"$SYSUNIT_DIR/led-statusd.service" <<'LEDSVC'
 # Managed by a2dp2fm (installer script)
 [Unit]
 Description=On-board LED status (pairing/connected/streaming)
@@ -680,10 +755,14 @@ RestartSec=1
 WantedBy=multi-user.target
 LEDSVC
 
-echo "==> Enable & start services"
+log "Enable & start services"
 systemctl daemon-reload
 systemctl enable bt2fm.service bt-volume-freqd.service avrcp-rds.service led-statusd.service bt-setup.service
 systemctl restart bt2fm.service bt-volume-freqd.service avrcp-rds.service led-statusd.service bt-setup.service || true
+INSTALL_SUMMARY+=("Systemd services: bt-setup bt-agent bt2fm bt-volume-freqd avrcp-rds led-statusd")
+
+log "Install summary:"
+for _s in "${INSTALL_SUMMARY[@]}"; do log "  • $_s"; done
 
 cat <<DONE
 
