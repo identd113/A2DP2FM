@@ -29,6 +29,66 @@ The installer is intended for a headless Raspberry Pi (no desktop environment) w
 
 > ⚠️ **Regulatory notice:** Broadcasting FM radio may be regulated in your region. Use low power, short antennas, and comply with local laws.
 
+### GPIO Header Pinout
+
+Below is the Raspberry Pi 40-pin GPIO header layout. You'll connect the antenna wire to **pin 7 (GPIO4)** and ground to **pin 6**:
+
+```
+         Raspberry Pi 3/4/Zero 2W — 40-pin GPIO Header
+
+     ┌──────────────────────────────────────────────┐
+     │  ⬤ ⬤   1-2    (3V3, 5V)                      │
+     │  ⬤ ⬤   3-4    (GPIO2, GPIO3)                 │
+     │  ⬤ ⬤   5-6    (GPIO4, GND)      ← ANTENNA    │
+     │  ⬤ ⬤   7-8    (GPIO17, GPIO27)  ← ACT LED    │
+     │  ⬪ ⬪   9-10   (GND, GPIO10)                  │
+     │  ⬪ ⬪   11-12  (GPIO9, GPIO11)                │
+     │  ⬪ ⬪   13-14  (GPIO27, GND)                  │
+     │  ⬪ ⬪   15-16  (GPIO22, GPIO23)               │
+     │  ⬪ ⬪   17-18  (3V3, GPIO24)                  │
+     │  ⬪ ⬪   19-20  (GPIO10, GND)                  │
+     │  ⬪ ⬪   21-22  (GPIO9, GPIO25)                │
+     │  ⬪ ⬪   23-24  (GPIO11, GPIO8)                │
+     │  ⬪ ⬪   25-26  (GND, GPIO7)                   │
+     │  ⬪ ⬪   27-28  (GPIO0, GPIO1)                 │
+     │  ⬪ ⬪   29-30  (GPIO5, GND)                   │
+     │  ⬪ ⬪   31-32  (GPIO6, GPIO12)                │
+     │  ⬪ ⬪   33-34  (GPIO13, GND)                  │
+     │  ⬪ ⬪   35-36  (GPIO19, GPIO16)               │
+     │  ⬪ ⬪   37-38  (GPIO26, GPIO20)               │
+     │  ⬪ ⬪   39-40  (GND, GPIO21)                  │
+     └──────────────────────────────────────────────┘
+```
+
+**Key Pins:**
+- **Pin 7 (GPIO4):** FM antenna output (10–20 cm insulated wire)
+- **Pin 6 (GND):** Ground reference for antenna
+- **Pin 11 (GPIO17):** ACT LED (on-board green LED on Pi3)
+- **Pin 15 (GPIO22):** ACT LED (on-board green LED on Pi4/Zero 2W)
+
+### Antenna Wiring
+
+Connect a 10–20 cm insulated wire to pin 7 and ensure ground reference via pin 6:
+
+```
+        Pin 7 (GPIO4)      Pin 6 (GND)
+              ↓                 ↓
+        ┌─────────┐       ┌─────────┐
+        │ ⬤ ←─────┼───→ ⬤ │
+        │ ⬤ ←─────────────┼───→ ⬤ │
+        └─────────┘       └─────────┘
+            |                  |
+            |                  └──→ Ground wire (optional)
+            |
+            └──→ 10-20 cm insulated antenna wire
+                 (FM transmission output)
+```
+
+**Ground options:**
+- Use ground plane on the header (recommended)
+- Or connect separate wire from pin 6 to antenna connector
+- Ground is already provided through the Pi's internal circuits
+
 ## Quick setup outline
 
 Follow these high-level steps to get on-air quickly:
