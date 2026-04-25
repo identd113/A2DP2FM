@@ -1,6 +1,11 @@
 # A2DP2FM TODO - Prioritized Task Breakdown
 
-**Total Effort:** ~43.5 hours | **Timeline:** ~1.3 weeks
+**Total Effort:** ~43.5 hours (original Bluetooth scope) | **Timeline:** ~1.3 weeks
+
+## Completed Features (outside original scope)
+
+- ✅ **AirPlay -> FM pathway** (`airplay2fm.sh`) — shairport-sync pipe backend → PiFmRds, RDS metadata from shairport-sync metadata pipe, LED status, systemd services, tmpfiles.d FIFO persistence.
+- ✅ **Dedicated uninstall script** (`uninstall.sh`) — detects both installs, interactive menu, smart shared-resource handling, `--bt`/`--airplay`/`--all`/`--yes` flags.
 
 ---
 
@@ -246,17 +251,7 @@
 - **Impact:** Low - Operational safety
 - **Effort:** 1 hour
 - **File(s):** AGENTS.md (new section or standalone UNINSTALL.md)
-- **Implementation:**
-  - Checklist of what to verify after uninstall:
-    - `systemctl list-unit-files` shows no a2dp2fm units
-    - `ls /usr/local/bin/bt*.sh` returns nothing
-    - `ls /run/rds_ctl` returns not found
-    - `/etc/default/bt2fm` is gone
-    - GPIO4 is released: `/sys/class/gpio/gpio4` missing
-    - `/boot/config.txt` doesn't contain act_led_trigger lines
-  - Procedure to manually verify each
-- **Testing:** Actually uninstall and verify all checks pass
-- **Status:** ⬜ Pending
+- **Status:** ✅ Done — superseded by `uninstall.sh`, which scans system state before and after removal and prints a summary of every removed artifact.
 
 ### Task #16: Add BlueALSA health monitoring and auto-recovery
 - **Priority:** Medium
