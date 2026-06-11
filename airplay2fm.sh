@@ -85,6 +85,103 @@ check_required_commands() {
   vlog "Pre-flight check passed"
 }
 
+# ---- Board detection & antenna pin-out art ----
+PI_BOARD="generic"
+PI_MODEL_STRING=""
+
+detect_pi_board() {
+  PI_MODEL_STRING="${A2DP2FM_PI_MODEL:-}"
+  if [[ -z "$PI_MODEL_STRING" && -r /proc/device-tree/model ]]; then
+    PI_MODEL_STRING="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+  fi
+  case "$PI_MODEL_STRING" in
+    *"Pi 400"*|*"Pi 500"*)               PI_BOARD="pi400";;
+    *Zero*)                              PI_BOARD="zero";;
+    *"Pi 2"*|*"Pi 3"*|*"Pi 4"*|*"Pi 5"*) PI_BOARD="fullsize";;
+    *)                                   PI_BOARD="generic";;
+  esac
+}
+
+show_board_art() {
+  # Highlight the antenna pin in bold red on interactive terminals only;
+  # piped/logged output gets the plain '#' marker with no escape codes.
+  local HL="" RST=""
+  if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+    HL=$'\033[1;31m'; RST=$'\033[0m'
+  fi
+  if [[ -n "$PI_MODEL_STRING" ]]; then
+    log "Detected board: $PI_MODEL_STRING (layout: $PI_BOARD)"
+  else
+    log "Board model not detected; showing generic header (layout: generic)"
+  fi
+  case "$PI_BOARD" in
+    fullsize) cat <<EOF
+
+   Board viewed from above, GPIO header along the top edge:
+   ┌──────────────────────────────────────────────────────┐
+   │ 2› o o o o o o o o o o o o o o o o o o o o ‹40       │
+   │ 1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39  ┌────┤
+   │          │                                      │USB │
+   │          └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}   ├────┤
+   │                                                 │USB │
+   │ ‹SD card (this end, underside)    ┌─────┐       ├────┤
+   │                                   │ SoC │       │ETH │
+   │   [PWR]   [HDMI]   [A/V]          └─────┘       └────┤
+   └──────────────────────────────────────────────────────┘
+EOF
+      ;;
+    zero) cat <<EOF
+
+   Board viewed from above, GPIO header along the top edge:
+   ┌────────────────────────────────────────────────────┐
+   │ 2› o o o o o o o o o o o o o o o o o o o o ‹40     │
+   │ 1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39     │
+   │          │                                         │
+   │          └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}      │
+   │ ‹SD card                                     [CAM] │
+   │      [mini-HDMI]      [USB]  [PWR]                 │
+   └────────────────────────────────────────────────────┘
+EOF
+      ;;
+    pi400) cat <<EOF
+
+   Rear panel, viewed from behind the keyboard:
+   ┌──────────────────────────────────────────────────────────┐
+   │ 39› o o o o o o o o o o o o o o o o ${HL}#${RST} o o o ‹1           │
+   │ 40› o o o o o o o o o o o o o o o o o o o o ‹2           │
+   │                                     │                    │
+   │     ${HL}PIN 7 (GPIO4): antenna wire${RST} ────┘                    │
+   │ [GPIO header] [SD] [HDMI][HDMI] [USB-C] [USB][USB] [ETH] │
+   └──────────────────────────────────────────────────────────┘
+   Note: the Pi 400/500 header is mirrored vs. a regular Pi --
+   pin 1 is in the TOP row at the RIGHT end (nearest the SD slot).
+EOF
+      ;;
+    *) cat <<EOF
+
+   Generic 40-pin header (pin 1 is nearest the SD-card end):
+      3V3  (1)  (2)  5V
+    GPIO2  (3)  (4)  5V
+    GPIO3  (5)  (6)  GND
+    GPIO4 ${HL}›(7)‹${RST} (8)  GPIO14   ◀── ${HL}PIN 7 (GPIO4): antenna wire here${RST}
+      GND  (9) (10)  GPIO15
+           ... continues to (40)
+EOF
+      ;;
+  esac
+  cat <<EOF
+
+   Antenna wire: insulated solid-core hookup wire (20-24 AWG) or a
+   female-ended jumper (Dupont) wire pushed straight onto the pin --
+   no soldering required. Length: 10-20 cm for room-level range
+   (recommended, keeps the signal polite); ~75 cm (quarter-wave)
+   maximizes range where legal. Run the wire vertically, away from
+   the board, and make sure it touches no other pin. A second wire
+   on any GND pin is optional but can improve signal quality.
+
+EOF
+}
+
 perform_uninstall() {
   log "Uninstalling AirPlay -> FM setup"
   local services=(airplay2fm.service airplay-rds.service led-airplay-statusd.service)
@@ -149,6 +246,9 @@ validate_mhz "--max"  "$FMAX"
 if (( UNINSTALL )); then perform_uninstall; exit 0; fi
 
 check_required_commands
+
+detect_pi_board
+show_board_art
 
 if (( DRY_RUN )); then
   log "DRY RUN: no changes will be made"
@@ -261,13 +361,17 @@ cat >/etc/shairport-sync.conf <<EOF
 general = {
   name = "${AP_NAME}";
   output_backend = "pipe";
+};
+
+sessioncontrol = {
   // Allow a new AirPlay session to take over from an existing one
   allow_session_interruption = "yes";
   session_timeout = 120;
 };
 
 pipe = {
-  // Audio is raw S16_LE stereo 44100 Hz — matches pi_fm_rds stdin expectations
+  // Audio is headerless raw S16_LE stereo 44100 Hz — sox wraps it in a WAV
+  // container before it reaches pi_fm_rds stdin
   name = "${AIRPLAY_AUDIO_PIPE}";
 };
 
@@ -375,7 +479,10 @@ while true; do
   # cat blocks until shairport-sync opens the pipe (stream begins).
   # When the stream ends, shairport-sync closes the pipe -> cat gets EOF
   # -> pi_fm_rds gets EOF on stdin -> both exit -> loop restarts.
+  # sox wraps the headerless raw PCM (S16_LE 44100 Hz stereo) from
+  # shairport-sync in a WAV container so pi_fm_rds (libsndfile) can read it.
   cat "$AUDIO_PIPE" \
+    | sox -t raw -r 44100 -e signed -b 16 -c 2 - -t wav - \
     | sudo "$PIFM" -freq "$CURF" -ps "AP-PI" -rt "AirPlay audio" -ctl "$RDSCTL" -audio - \
     || true
   sleep 1
@@ -396,7 +503,6 @@ EnvironmentFile=/etc/default/airplay2fm
 ExecStart=/usr/local/bin/airplay2fm.sh
 Restart=always
 RestartSec=2
-NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -426,6 +532,14 @@ def decode_data(el):
         except Exception:
             return ""
     return text
+
+def hex2ascii(s):
+    """shairport-sync writes <type>/<code> as 8-hex-digit-encoded ASCII."""
+    s = (s or "").strip()
+    try:
+        return bytes.fromhex(s).decode("ascii", errors="replace")
+    except ValueError:
+        return s
 
 def safe_ps(s: str) -> str:
     s = (s or "").strip()
@@ -471,7 +585,7 @@ def parse_items(pipe_file):
                 itype = root.findtext("type") or ""
                 code  = root.findtext("code") or ""
                 value = decode_data(root.find("data"))
-                yield itype, code, value
+                yield hex2ascii(itype), hex2ascii(code), value
             except ET.ParseError:
                 pass
 
@@ -635,7 +749,8 @@ INSTALL COMPLETE (AirPlay -> FM)
 • AirPlay name:    ${AP_NAME}
   (Appears in iOS Control Center / macOS audio output selector)
 • FM frequency:    ${FREQ} MHz   step: ${STEP} MHz   range: ${FMIN} - ${FMAX} MHz
-• Antenna:         Connect a 10-20 cm wire to GPIO4 (pin 7).
+• Antenna:         Connect a 10-20 cm wire to GPIO4 (pin 7) — see the board
+                   diagram shown at the start of this install.
 
 How to use:
   1. Ensure your iPhone/Mac is on the same Wi-Fi network as the Pi.

@@ -149,8 +149,14 @@ show_status() {
 
   # ---- Shared resources ----
   hdr "Shared resources"
-  local pifm_user="${BT_PI_USER:-${AP_PI_USER:-pi}}"
-  local pifm_home="${BT_PI_HOME:-${AP_PI_HOME:-/home/pi}}"
+  local pifm_user pifm_home
+  if (( BT_FOUND )); then
+    pifm_user="$BT_PI_USER"; pifm_home="$BT_PI_HOME"
+  elif (( AP_FOUND )); then
+    pifm_user="$AP_PI_USER"; pifm_home="$AP_PI_HOME"
+  else
+    pifm_user="pi"; pifm_home="/home/pi"
+  fi
   item "PiFmRds:" "$(file_state "${pifm_home}/PiFmRds")"
   item "ledctl.sh:" "$(file_state /usr/local/bin/ledctl.sh)"
   item "ACT LED config:" "$(grep -l 'act_led_trigger=none' /boot/config.txt /boot/firmware/config.txt 2>/dev/null | head -1 | xargs -I{} echo 'set in {}' || echo 'not set')"
@@ -195,6 +201,7 @@ if [[ -z "$TARGET" ]]; then
 
   while true; do
     read -r -p "  Choice: " choice
+    [[ -z "$choice" ]] && { echo "  Invalid choice — enter a number or 'q'."; continue; }
     case "$choice" in
       q|Q) echo; echo "  Cancelled."; echo; exit 0;;
       *)
@@ -320,9 +327,6 @@ rm_file() {
 do_uninstall_bt() {
   log "Removing Bluetooth A2DP -> FM (a2dp2fm)"
 
-  local bt_pi_user="${BT_PI_USER:-pi}"
-  local bt_pi_home="${BT_PI_HOME:-/home/pi}"
-
   for svc in bt2fm.service bt-volume-freqd.service avrcp-rds.service \
              led-statusd.service bt-agent.service bt-setup.service; do
     stop_and_remove_unit "$svc" "Managed by a2dp2fm"
@@ -332,6 +336,7 @@ do_uninstall_bt() {
 
   for f in \
     /usr/local/bin/bt2fm.sh \
+    /usr/local/bin/fm_announce.sh \
     /usr/local/bin/bt-volume-freqd.sh \
     /usr/local/bin/avrcp_rds.py \
     /usr/local/bin/led-statusd.sh \
@@ -343,11 +348,6 @@ do_uninstall_bt() {
     /run/fm_announce.wav; do
     rm_file "$f"
   done
-
-  # fm_announce.sh and ledctl.sh: only remove if not needed by AirPlay
-  if (( REMOVE_SHARED )); then
-    rm_file /usr/local/bin/fm_announce.sh
-  fi
 
   if [[ -d /usr/local/src/bluez-alsa ]]; then
     rm -rf /usr/local/src/bluez-alsa
@@ -393,8 +393,14 @@ do_uninstall_airplay() {
 do_remove_shared() {
   log "Removing shared resources"
 
-  local pifm_user="${BT_PI_USER:-${AP_PI_USER:-pi}}"
-  local pifm_home="${BT_PI_HOME:-${AP_PI_HOME:-/home/pi}}"
+  local pifm_user pifm_home
+  if (( BT_FOUND )); then
+    pifm_user="$BT_PI_USER"; pifm_home="$BT_PI_HOME"
+  elif (( AP_FOUND )); then
+    pifm_user="$AP_PI_USER"; pifm_home="$AP_PI_HOME"
+  else
+    pifm_user="pi"; pifm_home="/home/pi"
+  fi
   local pifm_dir="${pifm_home}/PiFmRds"
 
   rm_file /usr/local/bin/ledctl.sh

@@ -95,6 +95,11 @@ done
 [[ -p /run/rds_ctl ]] || fail "RDS control FIFO not created"
 pass "RDS control FIFO exists"
 
+if ! grep -F 'PIN 7 (GPIO4)' "$TMP_WORK/installer.log" >/dev/null; then
+  fail "Installer did not display antenna pin-out art"
+fi
+pass "Antenna pin-out art displayed"
+
 BT2FM_SCRIPT=/usr/local/bin/bt2fm.sh
 if ! grep -F 'for i in {1..120}; do' "$BT2FM_SCRIPT" >/dev/null; then
   fail "bt2fm.sh does not wait long enough for BlueALSA"
@@ -161,6 +166,25 @@ if ! grep -F 'ExecStart=/usr/local/bin/bt2fm.sh' "$BT_SERVICE" >/dev/null; then
   fail "bt2fm.service missing ExecStart"
 fi
 pass "bt2fm.service references runtime script"
+
+action "Board art dry-run checks"
+ART_MODELS=(
+  "Raspberry Pi 4 Model B Rev 1.4:fullsize"
+  "Raspberry Pi Zero 2 W Rev 1.0:zero"
+  "Raspberry Pi 400 Rev 1.0:pi400"
+  "NotAPi:generic"
+)
+for spec in "${ART_MODELS[@]}"; do
+  model="${spec%:*}"
+  layout="${spec##*:}"
+  out="$(A2DP2FM_PI_MODEL="$model" bash "$INSTALLER" --dry-run 2>&1)" \
+    || fail "dry-run failed for model '$model'"
+  grep -qF "(layout: $layout)" <<<"$out" \
+    || fail "Expected layout '$layout' for model '$model'"
+  grep -qF 'PIN 7 (GPIO4)' <<<"$out" \
+    || fail "Missing PIN 7 marker for model '$model'"
+  pass "Board art for '$model' -> $layout"
+done
 
 action "Cleaning up"
 cleanup_install_artifacts

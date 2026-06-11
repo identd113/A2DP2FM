@@ -1,15 +1,13 @@
-# Lightweight Raspberry Pi–like container for exercising the installer under QEMU
+# Lightweight Raspberry Pi–like container for exercising the installer.
 #
-# This image targets ARMv7 (32-bit) to mirror common Raspberry Pi builds while
-# remaining runnable on amd64 hosts via qemu-user-static. It intentionally keeps
-# the package set small because the installer pulls its own dependencies.
-
-FROM multiarch/qemu-user-static:latest AS qemu
+# This image targets ARMv7 (32-bit) to mirror common Raspberry Pi builds. On
+# arm/arm64 hosts (e.g. Apple Silicon) the image runs natively; on amd64 hosts
+# emulation is provided by the host (Docker Desktop handles it automatically,
+# and run-in-docker.sh registers qemu binfmt handlers for other amd64 hosts).
+# It intentionally keeps the package set small because the installer pulls its
+# own dependencies.
 
 FROM --platform=linux/arm/v7 debian:bookworm-slim
-
-# Copy the QEMU emulator so amd64 hosts can run the ARMv7 userspace.
-COPY --from=qemu /usr/bin/qemu-arm-static /usr/bin/
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -20,7 +18,9 @@ RUN apt-get update -y \
        sudo \
        ca-certificates \
        curl \
+       gcc \
        git \
+       make \
        passwd \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,4 +30,6 @@ RUN mkdir -p /var/log/a2dp2fm /run
 
 WORKDIR /workspace
 
-ENTRYPOINT ["bash"]
+# CMD (not ENTRYPOINT) so `docker run <image> bash tests/run-install-test.sh`
+# replaces it instead of being appended as arguments to bash.
+CMD ["bash"]

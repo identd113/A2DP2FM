@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if [[ ${1:-} == clone ]]; then
-  dest="${@: -1}"
+  dest="${*: -1}"
   rm -rf "$dest"
   mkdir -p "$dest"
   case "$dest" in

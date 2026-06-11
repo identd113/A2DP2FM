@@ -34,7 +34,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 ### AirPlay (`airplay2fm.sh`)
 
 * **Zero-config AirPlay discovery** – Advertises itself on the local network via Avahi/Bonjour; appears instantly in iOS Control Center and macOS audio output.
-* **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend to feed audio directly into PiFmRds.
+* **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
@@ -98,7 +98,21 @@ The ACT LED is an on-board LED controlled via `/sys/class/leds/led0`; it is not 
 
 Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is provided through the Pi's internal circuits; a separate ground wire is not required for basic operation, but connecting one to any GND pin can improve signal quality.
 
+**Wire type and length:**
+
+* **Type:** any insulated solid-core hookup wire (20–24 AWG / ~0.5 mm), or — easiest — a **female-ended jumper (Dupont) wire** pushed straight onto pin 7. No soldering required.
+* **Length:** 10–20 cm gives room-level range and keeps the signal polite (recommended). A ~75 cm wire is a quarter-wavelength for the FM band (λ/4 ≈ 69–85 cm across 87.7–107.9 MHz) and maximizes range — only use it where local regulations allow.
+* **Placement:** run the wire vertically and away from the board; make sure it touches no other pin. Bare wire ends should not contact the Pi's case or other metal.
+
+> On the **Pi 400/500** the GPIO header is on the rear and mirrored compared to a regular Pi: viewed from behind the keyboard, pin 1 is in the **top row at the right end** (nearest the SD slot), so pin 7 is the 4th pin from the right in the top row. The installer's board diagram shows this orientation.
+
 ## Quick setup
+
+> 💡 When either installer starts, it auto-detects your Pi model (Zero family,
+> full-size boards, Pi 400/500, or a generic fallback) and prints a terminal
+> diagram of that board with the antenna pin — **GPIO4, physical pin 7** —
+> highlighted, along with antenna wire guidance. Run with `--dry-run` to see
+> the diagram without installing anything.
 
 ### Bluetooth
 
@@ -129,6 +143,16 @@ Both scripts target Raspberry Pi OS (Debian-based). They require:
 All required packages are installed automatically.
 
 **Testing in a container (offline/CI):**
+
+The easiest way is the Docker harness, which builds an ARMv7 Raspberry Pi-like
+image and runs the full install test inside it (works on Apple Silicon and
+amd64 hosts):
+
+```bash
+./tests/run-in-docker.sh
+```
+
+Or run the installer manually against the stubbed system utilities:
 
 ```bash
 A2DP2FM_STUB_LOG_DIR=$(mktemp -d) \
@@ -184,8 +208,8 @@ sudo bash airplay2fm.sh [--freq 87.9] [--name "Pi FM Radio"] [--step 0.2] [--min
 
 What the installer does:
 
-* Installs Avahi, OpenSSL, ALSA, and PiFmRds build dependencies. Uses the apt `shairport-sync` package when available; builds from source ([mikebrady/shairport-sync](https://github.com/mikebrady/shairport-sync)) if the package lacks pipe-backend support.
-* Writes `/etc/shairport-sync.conf` configuring the pipe audio backend and metadata pipe.
+* Installs Avahi, OpenSSL, ALSA, sox, and PiFmRds build dependencies. Uses the apt `shairport-sync` package when available; builds from source ([mikebrady/shairport-sync](https://github.com/mikebrady/shairport-sync)) if the package lacks pipe-backend support.
+* Writes `/etc/shairport-sync.conf` configuring the pipe audio backend, session control, and metadata pipe.
 * Registers `/etc/tmpfiles.d/airplay2fm.conf` so systemd recreates the FIFOs at every boot.
 * Clones and builds PiFmRds (skipped if already present from a Bluetooth install).
 * Writes runtime defaults to `/etc/default/airplay2fm`.
@@ -334,7 +358,7 @@ sudo systemctl restart shairport-sync.service
 ### AirPlay
 
 * **Device does not appear in AirPlay list** – Confirm `shairport-sync.service` is active and that Avahi is running (`systemctl status avahi-daemon`). Both the Pi and the sending device must be on the same Wi-Fi network.
-* **Audio connects but no FM output** – Confirm `airplay2fm.service` is active. The audio FIFO `/run/airplay_audio` must exist; check with `ls -la /run/airplay_audio`. If missing, `sudo systemctl restart airplay2fm.service` recreates it.
+* **Audio connects but no FM output** – Confirm `airplay2fm.service` is active. The audio FIFO `/run/airplay_audio` must exist; check with `ls -la /run/airplay_audio`. If missing, `sudo systemctl restart airplay2fm.service` recreates it. The pipeline is `cat FIFO | sox | pi_fm_rds`, so also verify `sox` is installed (`command -v sox`).
 * **RDS not updating with track info** – Check `sudo journalctl -u airplay-rds.service`. Confirm the metadata FIFO `/run/airplay_metadata` exists. shairport-sync must be configured with `metadata.enabled = "yes"` in `/etc/shairport-sync.conf`.
 * **shairport-sync fails to start** – Run `shairport-sync -v` for a config parse error. Ensure `/etc/shairport-sync.conf` is valid and the pipe paths exist.
 * **FIFOs missing after reboot** – Run `sudo systemd-tmpfiles --create /etc/tmpfiles.d/airplay2fm.conf` to recreate them immediately. If the file is missing, re-run `sudo bash airplay2fm.sh` (it is idempotent).

@@ -19,6 +19,28 @@ The two pathways share hardware (GPIO 4, ACT LED) and some installed assets (`le
 - **GPIO 4 is exclusive:** Both pathways use GPIO 4 for the FM transmitter. Adding features that switch between sources must stop one `pi_fm_rds` instance before starting another.
 - **Shared resources:** `ledctl.sh` and `$PI_HOME/PiFmRds` are used by both pathways. The `uninstall.sh` script is aware of this and only removes them when the last pathway is being uninstalled. Follow the same logic if you add new shared assets.
 
+## Board Detection & Pin-out Art
+
+Both installers carry identical `detect_pi_board()` / `show_board_art()`
+functions (duplicated, like `ledctl.sh` — the installers stay standalone).
+At startup they read `/proc/device-tree/model` (override with
+`A2DP2FM_PI_MODEL` for testing or non-Pi machines) and print a board diagram
+highlighting GPIO4 / pin 7 plus antenna wire guidance, before any install
+action runs (and in `--dry-run`). Categories:
+
+| Layout | Match | Boards |
+|--------|-------|--------|
+| `pi400` | `*"Pi 400"*` / `*"Pi 500"*` | header on rear, **mirrored**: pin 1 top-right viewed from behind |
+| `zero` | `*Zero*` | Zero / Zero W / Zero 2 W |
+| `fullsize` | `*"Pi 2"*` … `*"Pi 5"*` | 2B, 3A+/3B/3B+, 4B, 5 |
+| `generic` | anything else | plain numbered-header fallback |
+
+Match order matters (`Pi 400` before `Pi 4`). The detection log line includes
+`(layout: <category>)` — the test harness asserts on it, so keep that format.
+ANSI highlighting is TTY-only; piped output stays plain. If you edit the art,
+keep every line of a block the same visible width and ≤ 76 columns, and keep
+both installers' copies identical.
+
 ## Systemd Services
 
 ### Bluetooth (`a2dp2fm.sh`)
@@ -53,8 +75,10 @@ Phone (A2DP) → BlueALSA (bluealsad) → arecord → pi_fm_rds (GPIO 4) → FM
 
 **AirPlay:**
 ```
-iPhone/Mac (RAOP) → shairport-sync → /run/airplay_audio (FIFO) → cat | pi_fm_rds (GPIO 4) → FM
+iPhone/Mac (RAOP) → shairport-sync → /run/airplay_audio (FIFO) → cat | sox (raw→WAV) | pi_fm_rds (GPIO 4) → FM
 ```
+
+shairport-sync's pipe backend emits headerless raw PCM (S16_LE 44100 Hz stereo); `pi_fm_rds` reads stdin via libsndfile, which requires a WAV header, so `sox` wraps the stream in a WAV container. The Bluetooth path needs no sox stage because `arecord` emits a WAV header by default.
 
 The AirPlay pipeline restarts `pi_fm_rds` automatically after each stream ends (the FIFO hits EOF). The FM carrier is off when no stream is active.
 
@@ -67,7 +91,7 @@ RT <64-char radiotext>
 ```
 
 - Bluetooth metadata comes from BlueZ AVRCP D-Bus signals (`avrcp_rds.py`).
-- AirPlay metadata comes from shairport-sync's XML metadata pipe at `/run/airplay_metadata` (`airplay-rds.py`). The `mden` (metadata-end) event is type `ssnc`, not `core` — keep this in mind if modifying the metadata reader.
+- AirPlay metadata comes from shairport-sync's XML metadata pipe at `/run/airplay_metadata` (`airplay-rds.py`). The `<type>` and `<code>` element values arrive hex-encoded (e.g. `73736e63` = `ssnc`); `airplay-rds.py` decodes them with `hex2ascii()` before comparing. The `mden` (metadata-end) event is type `ssnc`, not `core` — keep this in mind if modifying the metadata reader.
 
 ## FIFO Persistence
 
