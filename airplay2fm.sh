@@ -118,16 +118,22 @@ show_board_art() {
     fullsize) cat <<EOF
 
    Board viewed from above, GPIO header along the top edge:
-   ┌──────────────────────────────────────────────────────┐
-   │ 2› o o o o o o o o o o o o o o o o o o o o ‹40       │
-   │ 1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39  ┌────┤
-   │          │                                      │USB │
-   │          └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}   ├────┤
-   │                                                 │USB │
-   │ ‹SD card (this end, underside)    ┌─────┐       ├────┤
-   │                                   │ SoC │       │ETH │
-   │   [PWR]   [HDMI]   [A/V]          └─────┘       └────┤
-   └──────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────────┐
+   │  2› o o o o o o o o o o o o o o o o o o o o ‹40          │
+   │  1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39          │
+   │           │                                              │
+   │           └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}           │
+   │                                                    ┌─────┤
+   │ ‹SD card                                           │ USB │
+   │  (underside,                                       │ USB │
+   │   this end)                  ┌──────┐              ├─────┤
+   │                              │ SoC  │              │ USB │
+   │ [DISPLAY]                    └──────┘              │ USB │
+   │                                                    ├─────┤
+   │                                  [CAMERA]          │ ETH │
+   │                                                    └─────┤
+   │     [PWR]      [HDMI]      [A/V]                         │
+   └──────────────────────────────────────────────────────────┘
 EOF
       ;;
     zero) cat <<EOF
