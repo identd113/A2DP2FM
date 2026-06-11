@@ -569,6 +569,9 @@ PI_USER="$PI_USER"
 PI_HOME="$PI_HOME"
 EOF
 mv "$_bt2fm_cfg" /etc/default/bt2fm
+# mktemp creates 0600; the pipeline service runs as $PI_USER and sources this
+chmod 644 /etc/default/bt2fm
+chown root:root /etc/default/bt2fm || true
 INSTALL_SUMMARY+=("Runtime config written to /etc/default/bt2fm")
 
 log "Prepare RDS control FIFO: $RDSCTL"

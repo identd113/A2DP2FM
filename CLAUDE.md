@@ -79,6 +79,10 @@ tools (`tests/bin/`); the AirPlay path and anything touching real hardware
   reader) only runs while audio flows. The metadata daemons open the FIFO
   with `O_NONBLOCK` and drop updates when there is no reader — don't revert
   to plain `open()`, it wedges the daemon.
+- **`mktemp` creates 0600:** any file staged with mktemp and `mv`'d into
+  place needs an explicit `chmod` — the pipeline services run as the pi
+  user and `source` the configs in `/etc/default/`, so a root-only config
+  fails the service with "Permission denied" (seen on real hardware).
 
 ## Conventions
 

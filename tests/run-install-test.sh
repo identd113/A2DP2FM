@@ -100,6 +100,15 @@ if ! grep -F 'PIN 7 (GPIO4)' "$TMP_WORK/installer.log" >/dev/null; then
 fi
 pass "Antenna pin-out art displayed"
 
+# Regression: mktemp creates 0600 — the pipeline service runs as the pi user
+# and must be able to source the runtime config.
+cfg_mode="$(stat -c %a /etc/default/bt2fm)"
+[[ "$cfg_mode" == "644" ]] || fail "/etc/default/bt2fm mode is $cfg_mode, expected 644"
+# su (not the stubbed sudo) to genuinely test pi-user readability
+su -s /bin/bash pi -c 'cat /etc/default/bt2fm' >/dev/null \
+  || fail "/etc/default/bt2fm not readable by pi user"
+pass "Runtime config is world-readable (644)"
+
 BT2FM_SCRIPT=/usr/local/bin/bt2fm.sh
 if ! grep -F 'for i in {1..120}; do' "$BT2FM_SCRIPT" >/dev/null; then
   fail "bt2fm.sh does not wait long enough for BlueALSA"

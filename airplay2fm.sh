@@ -473,6 +473,9 @@ PI_USER="${PI_USER}"
 PI_HOME="${PI_HOME}"
 EOF
 mv "$_cfg" /etc/default/airplay2fm
+# mktemp creates 0600; the pipeline service runs as $PI_USER and sources this
+chmod 644 /etc/default/airplay2fm
+chown root:root /etc/default/airplay2fm || true
 INSTALL_SUMMARY+=("Runtime config written to /etc/default/airplay2fm")
 
 # ---- AirPlay -> FM pipeline script ----
