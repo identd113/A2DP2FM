@@ -109,6 +109,13 @@ su -s /bin/bash pi -c 'cat /etc/default/bt2fm' >/dev/null \
   || fail "/etc/default/bt2fm not readable by pi user"
 pass "Runtime config is world-readable (644)"
 
+# Regression: the activity LED is /sys/class/leds/ACT on Bookworm+ kernels
+if ! grep -F 'ACT led0' /usr/local/bin/ledctl.sh >/dev/null; then
+  fail "ledctl.sh does not probe both ACT and led0 LED names"
+fi
+/usr/local/bin/ledctl.sh on || fail "ledctl.sh fails on a board with no activity LED"
+pass "ledctl.sh handles ACT/led0 naming and missing LED"
+
 BT2FM_SCRIPT=/usr/local/bin/bt2fm.sh
 if ! grep -F 'for i in {1..120}; do' "$BT2FM_SCRIPT" >/dev/null; then
   fail "bt2fm.sh does not wait long enough for BlueALSA"

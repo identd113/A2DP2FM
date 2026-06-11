@@ -83,6 +83,13 @@ tools (`tests/bin/`); the AirPlay path and anything touching real hardware
   place needs an explicit `chmod` — the pipeline services run as the pi
   user and `source` the configs in `/etc/default/`, so a root-only config
   fails the service with "Permission denied" (seen on real hardware).
+- **The activity LED is `/sys/class/leds/ACT` on Bookworm+** (older
+  releases use `led0`). `ledctl.sh` probes both and no-ops when neither
+  exists — don't hardcode a single name (crash-looped on real hardware).
+- **shairport-sync runs as its own user** (distro package), so the
+  audio/metadata FIFOs in /run must be 0666, not 0660 pi:pi — otherwise
+  the first AirPlay stream dies with "Permission denied" opening the pipe
+  (seen on real hardware). The tmpfiles.d entries encode this.
 
 ## Conventions
 

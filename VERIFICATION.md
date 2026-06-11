@@ -30,9 +30,26 @@ Full-repo verification followed by fixes, committed as `5c569b7`..`e0c4c88`:
    including art-in-install-log, four layout assertions, and three
    unsupported-board assertions.
 
+### Real-hardware validation (Pi 3, hostname pi3-BT, Bookworm)
+First live runs of the AirPlay pathway surfaced three environment bugs, each
+fixed same-day with regression tests:
+1. Runtime config staged via mktemp was mode 0600 — pipeline service
+   (running as the pi user) failed to source it.
+2. `/sys/class/leds/led0` renamed to `ACT` on Bookworm kernels — LED daemon
+   crash-looped; ledctl.sh now probes both names.
+3. FIFOs created 0660 pi:pi — the distro shairport-sync service runs as its
+   own user and got "Permission denied" opening the audio pipe on the first
+   stream; pipes are now 0666.
+
+After fixes, confirmed live on hardware: shairport-sync session accepted,
+audio pipeline up (pi_fm_rds consuming the pipe), AVRCP-equivalent metadata
+decoded and delivered to RDS ("RDS updated: 'Blocks w/ Neal Brennan' /
+'Prolific Standup Posting — Josh Johnson'"), LED status driving
+/sys/class/leds/ACT.
+
 ### Outstanding
-- AirPlay path fixes are documentation-verified and harness-tested but still
-  need a real-hardware smoke test (AirPlay stream → FM audio → RDS update).
+- Radio-side confirmation (FM audio audible, RDS text displayed) pending
+  antenna wire installation on the test Pi.
 - BlueALSA capture addressing (`DEV=` parameter) needs verification on a
   physical Pi — see TODO.md "FM Code Review Findings".
 

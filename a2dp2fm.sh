@@ -845,18 +845,31 @@ done
 cat >"$BIN_DIR/ledctl.sh" <<'LEDCTL'
 #!/usr/bin/env bash
 set -euo pipefail
-LED="/sys/class/leds/led0"; TR="$LED/trigger"; BR="$LED/brightness"
+# The activity LED is /sys/class/leds/ACT on Raspberry Pi OS Bookworm+
+# kernels and /sys/class/leds/led0 on older releases.
+LED=""
+for name in ACT led0; do
+  [[ -d "/sys/class/leds/$name" ]] && { LED="/sys/class/leds/$name"; break; }
+done
+# No controllable activity LED (some boards/containers): no-op successfully.
+[[ -n "$LED" ]] || exit 0
+TR="$LED/trigger"; BR="$LED/brightness"
 set_manual(){ [[ -w "$TR" ]] && echo none | sudo tee "$TR" >/dev/null || true; }
 on(){ set_manual; echo 1 | sudo tee "$BR" >/dev/null; }
 off(){ set_manual; echo 0 | sudo tee "$BR" >/dev/null; }
-blink_for(){ local d="$1" p="$2"; set_manual; local end=$(( $(date +%s%3N)+d ))
-  while (( $(date +%s%3N) < end )); do echo 1|sudo tee "$BR" >/dev/null; sleep "$(awk -v p="$p" 'BEGIN{printf "%.3f", p/2000}')"
-    echo 0|sudo tee "$BR" >/dev/null; sleep "$(awk -v p="$p" 'BEGIN{printf "%.3f", p/2000}')"; done; }
-slow(){ blink_for 2000 1000; }  # pairing
+blink_for(){
+  local d="$1" p="$2"; set_manual
+  local end=$(( $(date +%s%3N)+d ))
+  while (( $(date +%s%3N) < end )); do
+    echo 1|sudo tee "$BR" >/dev/null; sleep "$(awk -v p="$p" 'BEGIN{printf "%.3f", p/2000}')"
+    echo 0|sudo tee "$BR" >/dev/null; sleep "$(awk -v p="$p" 'BEGIN{printf "%.3f", p/2000}')"
+  done
+}
+slow(){ blink_for 2000 1000; }
 fast(){ blink_for 600 200; }
 double(){ on; sleep 0.12; off; sleep 0.12; on; sleep 0.12; off; }
 flash3(){ for i in 1 2 3; do blink_for 180 180; sleep 0.06; done; }
-case "${1:-}" in on|off|slow|fast|double|flash3) "$@";; *) echo "Usage: ledctl.sh {on|off|slow|double|flash3}";; esac
+case "${1:-}" in on|off|slow|fast|double|flash3) "$@";; *) echo "Usage: ledctl.sh {on|off|slow|fast|double|flash3}";; esac
 LEDCTL
 finalize_script "$BIN_DIR/ledctl.sh"
 INSTALL_SUMMARY+=("Deployed $BIN_DIR/ledctl.sh")

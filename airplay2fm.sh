@@ -370,12 +370,17 @@ for fifo in "$AIRPLAY_AUDIO_PIPE" "$AIRPLAY_META_PIPE" "$RDSCTL"; do
   mkfifo "$fifo"
   chown "$PI_USER:$PI_USER" "$fifo" || true
 done
+# The distro shairport-sync service runs as its own "shairport-sync" user,
+# so the pipes it writes must be world-writable.
+chmod 0666 "$AIRPLAY_AUDIO_PIPE" "$AIRPLAY_META_PIPE"
+chmod 0660 "$RDSCTL"
 
 cat >/etc/tmpfiles.d/airplay2fm.conf <<EOF
 # Managed by airplay2fm (installer script)
 # Recreate FIFOs at every boot before services start
-p ${AIRPLAY_AUDIO_PIPE}  0660 ${PI_USER} ${PI_USER} -
-p ${AIRPLAY_META_PIPE}   0660 ${PI_USER} ${PI_USER} -
+# 0666: the distro shairport-sync service runs as its own user
+p ${AIRPLAY_AUDIO_PIPE}  0666 ${PI_USER} ${PI_USER} -
+p ${AIRPLAY_META_PIPE}   0666 ${PI_USER} ${PI_USER} -
 p ${RDSCTL}              0660 ${PI_USER} ${PI_USER} -
 EOF
 INSTALL_SUMMARY+=("FIFOs: $AIRPLAY_AUDIO_PIPE  $AIRPLAY_META_PIPE  $RDSCTL (persistent via tmpfiles.d)")
@@ -498,6 +503,7 @@ AUDIO_PIPE="/run/airplay_audio"
 RDSCTL="/run/rds_ctl"
 
 [ -p "$AUDIO_PIPE" ] || mkfifo "$AUDIO_PIPE"
+chmod 666 "$AUDIO_PIPE" 2>/dev/null || true  # shairport-sync runs as its own user
 [ -p "$RDSCTL" ]    || mkfifo "$RDSCTL"
 
 read_freq() { grep -E '^FREQ=' /etc/default/airplay2fm | cut -d= -f2; }
@@ -700,13 +706,20 @@ RestartSec=2
 WantedBy=multi-user.target
 RDSVC
 
-# ---- LED helpers (install only if not already present from a2dp2fm) ----
-if [[ ! -x "$BIN_DIR/ledctl.sh" ]]; then
-  log "Install LED control helper"
-  cat >"$BIN_DIR/ledctl.sh" <<'LEDCTL'
+# ---- LED helper (shared with a2dp2fm; always overwrite so fixes propagate) ----
+log "Install LED control helper"
+cat >"$BIN_DIR/ledctl.sh" <<'LEDCTL'
 #!/usr/bin/env bash
 set -euo pipefail
-LED="/sys/class/leds/led0"; TR="$LED/trigger"; BR="$LED/brightness"
+# The activity LED is /sys/class/leds/ACT on Raspberry Pi OS Bookworm+
+# kernels and /sys/class/leds/led0 on older releases.
+LED=""
+for name in ACT led0; do
+  [[ -d "/sys/class/leds/$name" ]] && { LED="/sys/class/leds/$name"; break; }
+done
+# No controllable activity LED (some boards/containers): no-op successfully.
+[[ -n "$LED" ]] || exit 0
+TR="$LED/trigger"; BR="$LED/brightness"
 set_manual(){ [[ -w "$TR" ]] && echo none | sudo tee "$TR" >/dev/null || true; }
 on(){ set_manual; echo 1 | sudo tee "$BR" >/dev/null; }
 off(){ set_manual; echo 0 | sudo tee "$BR" >/dev/null; }
@@ -724,12 +737,9 @@ double(){ on; sleep 0.12; off; sleep 0.12; on; sleep 0.12; off; }
 flash3(){ for i in 1 2 3; do blink_for 180 180; sleep 0.06; done; }
 case "${1:-}" in on|off|slow|fast|double|flash3) "$@";; *) echo "Usage: ledctl.sh {on|off|slow|fast|double|flash3}";; esac
 LEDCTL
-  chmod +x "$BIN_DIR/ledctl.sh"
-  chown "$PI_USER:$PI_USER" "$BIN_DIR/ledctl.sh" || true
-  INSTALL_SUMMARY+=("Deployed $BIN_DIR/ledctl.sh")
-else
-  vlog "ledctl.sh already present (from a2dp2fm install); skipping"
-fi
+chmod +x "$BIN_DIR/ledctl.sh"
+chown "$PI_USER:$PI_USER" "$BIN_DIR/ledctl.sh" || true
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/ledctl.sh")
 
 # ---- LED status daemon for AirPlay ----
 log "AirPlay LED status daemon"

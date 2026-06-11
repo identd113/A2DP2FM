@@ -64,6 +64,17 @@ non-blocking RDS FIFO writes in both metadata daemons). The rest:*
   and announce again.
 - **Status:** ⬜ Pending
 
+### Review #7: ledctl.sh sudo calls flood the journal
+- **Priority:** Low (cosmetic, but very noisy)
+- **File(s):** ledctl.sh (embedded in both installers)
+- **Problem:** every LED write goes through `sudo tee`, producing ~4
+  sudo/pam journal lines per blink even though the LED daemons already run
+  as root (observed on real hardware: hundreds of lines/minute).
+- **Implementation idea:** write to sysfs directly when EUID=0 and only
+  fall back to sudo otherwise; or set `LogLevelMax=notice` on the LED
+  service units.
+- **Status:** ⬜ Pending
+
 ### Review #6: bt2fm restart loop spams journal when no device is connected
 - **Priority:** Low (cosmetic)
 - **File(s):** bt2fm.sh / bt2fm.service (a2dp2fm.sh)
