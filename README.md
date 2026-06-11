@@ -102,7 +102,15 @@ Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is pro
 **Wire type and length:**
 
 * **Type:** any insulated solid-core hookup wire (20–24 AWG / ~0.5 mm), or — easiest — a **female-ended jumper (Dupont) wire** pushed straight onto pin 7. No soldering required.
-* **Length:** 10–20 cm gives room-level range and keeps the signal polite (recommended). A ~75 cm wire is a quarter-wavelength for the FM band (λ/4 ≈ 69–85 cm across 87.7–107.9 MHz) and maximizes range — only use it where local regulations allow.
+* **Length:** pick for the coverage you need — longer radiates further, so stay short where regulations are strict:
+
+  | Length | Typical usable range |
+  |--------|---------------------|
+  | 10–20 cm (4–8") | same room / adjacent room — polite default |
+  | ~30 cm (12") | most of a typical house |
+  | ~75 cm (29.5") quarter-wave | whole house + yard — only where legal |
+
+  The quarter-wave length is frequency-dependent (λ/4 ≈ 69–85 cm across 87.7–107.9 MHz; ~85 cm at 87.9). House construction matters more than exact length — wood/drywall barely attenuates FM, while brick, plaster on metal lath, or foil-backed insulation can eat it. Elevation is free range: place the Pi high and central before reaching for a longer wire.
 * **Placement:** run the wire vertically and away from the board; make sure it touches no other pin. Bare wire ends should not contact the Pi's case or other metal.
 
 > On the **Pi 400/500** the GPIO header is on the rear and mirrored compared to a regular Pi: viewed from behind the keyboard, pin 1 is in the **top row at the right end** (nearest the SD slot), so pin 7 is the 4th pin from the right in the top row. The installer's board diagram shows this orientation.
@@ -130,6 +138,35 @@ Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is pro
 3. Run the installer: `sudo bash airplay2fm.sh --freq 87.9 --name "My Pi Radio"`
 4. Open iOS Control Center → AirPlay → select **My Pi Radio**.
 5. Tune a radio to 87.9 MHz and start playing audio.
+
+### Run without cloning
+
+The installers are standalone single files — everything they deploy is
+embedded, so you can fetch one straight from GitHub instead of cloning:
+
+```bash
+# Bluetooth pathway
+curl -fsSLO https://raw.githubusercontent.com/identd113/A2DP2FM/main/a2dp2fm.sh
+sudo bash a2dp2fm.sh --freq 87.9
+
+# AirPlay pathway
+curl -fsSLO https://raw.githubusercontent.com/identd113/A2DP2FM/main/airplay2fm.sh
+sudo bash airplay2fm.sh --freq 87.9 --name "My Pi Radio"
+
+# Uninstaller (download it — the interactive menu needs a real stdin)
+curl -fsSLO https://raw.githubusercontent.com/identd113/A2DP2FM/main/uninstall.sh
+sudo bash uninstall.sh
+```
+
+Notes:
+
+* `curl -O` overwrites an existing file of the same name in the current
+  directory; use `-o othername.sh` to avoid that.
+* The Pi still needs network access during install (apt + GitHub clones).
+* **Re-installing resets the frequency config:** the installer rewrites
+  `/etc/default/bt2fm` / `airplay2fm` from its command-line flags every run.
+  If you've changed the frequency since installing, pass it explicitly
+  (check first with `grep FREQ /etc/default/bt2fm`).
 
 > Both paths use the same antenna and GPIO 4. Do not run both installers and then start both services — they will fight over the FM transmitter.
 

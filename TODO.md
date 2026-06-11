@@ -6,6 +6,10 @@
 
 - ✅ **AirPlay -> FM pathway** (`airplay2fm.sh`) — shairport-sync pipe backend → PiFmRds, RDS metadata from shairport-sync metadata pipe, LED status, systemd services, tmpfiles.d FIFO persistence.
 - ✅ **Dedicated uninstall script** (`uninstall.sh`) — detects both installs, interactive menu, smart shared-resource handling, `--bt`/`--airplay`/`--all`/`--yes` flags.
+- ✅ **Full-repo bug-fix wave (2026-06-11)** — NoNewPrivileges/sudo conflict, shairport-sync sessioncontrol group, sox WAV wrapping for the AirPlay pipe, hex-decoded metadata codes, uninstaller menu/fallback fixes, repaired Docker test harness.
+- ✅ **Board detection + pin-out art** — auto-detects the Pi model and prints a proportioned board diagram (fullsize/zero/pi400/generic) after install and in `--dry-run`, with GPIO4/pin 7 highlighted and antenna wire guidance.
+- ✅ **Pi 5/500 refusal** — installers detect unsupported boards (RP1 blocks the GPCLK method) and exit with an explanation; `A2DP2FM_FORCE_INSTALL=1` overrides.
+- ✅ **Non-blocking RDS FIFO writes** — both metadata daemons drop updates when `pi_fm_rds` isn't listening instead of blocking forever.
 
 ---
 
