@@ -72,6 +72,13 @@ tools (`tests/bin/`); the AirPlay path and anything touching real hardware
 - **`set -e` and associative arrays:** an empty subscript
   (`${MAP[$choice]}` with empty `$choice`) is a fatal "bad array subscript".
   Guard user input before indexing (see the menu loop in `uninstall.sh`).
+- **Pi 5/500 cannot transmit:** PiFmRds needs the SoC clock generator on
+  GPIO4; the RP1 chip on Pi 5/500 breaks this. `check_fm_hardware_support()`
+  refuses those boards (`A2DP2FM_FORCE_INSTALL=1` overrides, for tests).
+- **RDS FIFO writes must not block:** `pi_fm_rds` (the `/run/rds_ctl`
+  reader) only runs while audio flows. The metadata daemons open the FIFO
+  with `O_NONBLOCK` and drop updates when there is no reader — don't revert
+  to plain `open()`, it wedges the daemon.
 
 ## Conventions
 

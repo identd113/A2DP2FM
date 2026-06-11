@@ -9,6 +9,67 @@
 
 ---
 
+## 🟠 FM CODE REVIEW FINDINGS (2026-06-11)
+*From a full review of the FM pipeline code. Two findings were fixed
+immediately (Pi 5/500 refusal with `A2DP2FM_FORCE_INSTALL` override;
+non-blocking RDS FIFO writes in both metadata daemons). The rest:*
+
+### Review #1: Verify BlueALSA capture device addressing on hardware
+- **Priority:** High — most likely "installed fine but no audio" failure
+- **File(s):** bt2fm.sh (embedded in a2dp2fm.sh, BTFM heredoc)
+- **Problem:** `arecord -D ${PCM_PREFIX}:PROFILE=a2dp` omits `DEV=`; on some
+  bluez-alsa versions the default device is `00:00:00:00:00:00` and capture
+  fails. Many working setups pass `DEV=<connected phone MAC>`.
+- **Implementation idea:** discover the connected device MAC via
+  `bluealsactl list-pcms` / `bluetoothctl devices Connected` and pass
+  `DEV=<MAC>` explicitly; fall back to no-DEV form.
+- **Testing:** Requires a real Pi + phone. Cannot be verified in CI.
+- **Status:** ⬜ Pending
+
+### Review #2: Bluetooth carrier stays on while playback is paused
+- **Priority:** Medium
+- **File(s):** bt2fm.sh / bt-volume-freqd.sh (a2dp2fm.sh heredocs)
+- **Problem:** once a device is connected, `arecord | pi_fm_rds` runs
+  continuously — paused playback transmits silence indefinitely (AirPlay
+  path only transmits during streams). Wastes spectrum, radiates 24/7.
+- **Implementation idea:** use the existing `/run/bt2fm.playstate` (written
+  by bt-volume-freqd) to stop/start bt2fm.service on pause/resume, with a
+  grace period to avoid flapping between tracks.
+- **Status:** ⬜ Pending
+
+### Review #3: No mutual exclusion between bt2fm and airplay2fm services
+- **Priority:** Medium — both pathways fight over GPIO4/DMA if started together
+- **File(s):** bt2fm.service (a2dp2fm.sh), airplay2fm.service (airplay2fm.sh)
+- **Implementation:** add `Conflicts=airplay2fm.service` to bt2fm.service and
+  `Conflicts=bt2fm.service` to airplay2fm.service (systemd ignores Conflicts
+  on units that don't exist, so single-pathway installs are unaffected).
+- **Status:** ⬜ Pending
+
+### Review #4: Install-time frequency validation is numeric-only
+- **Priority:** Low (related: Task #5 below covers runtime bounds)
+- **File(s):** a2dp2fm.sh, airplay2fm.sh (validate_mhz / arg validation)
+- **Problem:** `--freq 300` is accepted; no check that FREQ lies within
+  [FMIN, FMAX] or the FM broadcast band.
+- **Status:** ⬜ Pending
+
+### Review #5: Frequency-change announcement transmits on the new frequency
+- **Priority:** Low (UX)
+- **File(s):** fm_announce.sh (a2dp2fm.sh heredoc)
+- **Problem:** a listener still tuned to the old frequency hears nothing.
+  Better: announce "moving to X" on the old frequency first, then switch
+  and announce again.
+- **Status:** ⬜ Pending
+
+### Review #6: bt2fm restart loop spams journal when no device is connected
+- **Priority:** Low (cosmetic)
+- **File(s):** bt2fm.sh / bt2fm.service (a2dp2fm.sh)
+- **Problem:** with no BT device, the script waits 240 s, exits 0, and
+  systemd restarts it 2 s later, forever. Consider a longer RestartSec,
+  a StartLimit, or quieter logging in the wait loop.
+- **Status:** ⬜ Pending
+
+---
+
 ## 🔴 PHASE 1: ROBUSTNESS (Critical Fixes - Week 1)
 *Prevents silent failures and data corruption*
 

@@ -41,6 +41,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 ## Hardware requirements
 
 * Raspberry Pi with 40-pin header (tested with Pi 3 / 4 / Zero 2 W).
+* ⛔ **Pi 5 and Pi 500 are NOT supported.** PiFmRds generates FM through the SoC clock generator on GPIO4; on the Pi 5/500, GPIO is routed through the RP1 I/O chip and this method cannot work. The installers detect these boards and refuse to run (`A2DP2FM_FORCE_INSTALL=1` overrides, but the transmitter will not function).
 * **Bluetooth path:** Bluetooth adapter (onboard or USB) supported by BlueZ.
 * **AirPlay path:** Wi-Fi connection on the same network as the sending device.
 * Short piece of wire (~10–20 cm) connected to GPIO 4 (pin 7) as the FM antenna.

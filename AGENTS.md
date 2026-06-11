@@ -37,6 +37,11 @@ the end of `--dry-run` output). Categories:
 
 Match order matters (`Pi 400` before `Pi 4`). The detection log line includes
 `(layout: <category>)` — the test harness asserts on it, so keep that format.
+
+`check_fm_hardware_support()` (also duplicated in both installers) refuses to
+install on Pi 5/500 — PiFmRds drives FM via the SoC clock generator on GPIO4,
+which the RP1 I/O chip on those boards makes impossible. The
+`A2DP2FM_FORCE_INSTALL=1` env var overrides the refusal (used in tests).
 ANSI highlighting is TTY-only; piped output stays plain. If you edit the art,
 keep every line of a block the same visible width and ≤ 76 columns, and keep
 both installers' copies identical.

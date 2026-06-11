@@ -186,6 +186,20 @@ for spec in "${ART_MODELS[@]}"; do
   pass "Board art for '$model' -> $layout"
 done
 
+action "Unsupported board checks"
+if A2DP2FM_PI_MODEL="Raspberry Pi 5 Model B Rev 1.0" bash "$INSTALLER" --dry-run >/dev/null 2>&1; then
+  fail "Installer should refuse Pi 5 (PiFmRds unsupported)"
+fi
+pass "Installer refuses Pi 5"
+if A2DP2FM_PI_MODEL="Raspberry Pi 500 Rev 1.0" bash "$INSTALLER" --dry-run >/dev/null 2>&1; then
+  fail "Installer should refuse Pi 500 (PiFmRds unsupported)"
+fi
+pass "Installer refuses Pi 500"
+A2DP2FM_PI_MODEL="Raspberry Pi 5 Model B Rev 1.0" A2DP2FM_FORCE_INSTALL=1 \
+  bash "$INSTALLER" --dry-run >/dev/null 2>&1 \
+  || fail "A2DP2FM_FORCE_INSTALL=1 should override the Pi 5 refusal"
+pass "A2DP2FM_FORCE_INSTALL=1 overrides refusal"
+
 action "Cleaning up"
 cleanup_install_artifacts
 pass "Removed generated files"

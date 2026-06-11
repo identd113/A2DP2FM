@@ -183,6 +183,27 @@ EOF
 EOF
 }
 
+check_fm_hardware_support() {
+  # PiFmRds drives the FM signal through the SoC clock generator (GPCLK0)
+  # via /dev/mem DMA. On the Pi 5/500 GPIO sits behind the RP1 I/O chip,
+  # so this method cannot work. Upstream supports Pi 1-4, Zero, Zero 2.
+  detect_pi_board
+  case "$PI_MODEL_STRING" in
+    *"Pi 5"*)  # also matches "Pi 500"
+      log "ERROR: $PI_MODEL_STRING is not supported by PiFmRds." >&2
+      log "FM transmission uses the SoC clock generator on GPIO4; on the" >&2
+      log "Pi 5/500, GPIO is routed through the RP1 chip and this cannot work." >&2
+      log "Supported boards: Pi 1-4, Zero, Zero W, Zero 2 W, Pi 400." >&2
+      if [[ "${A2DP2FM_FORCE_INSTALL:-0}" == "1" ]]; then
+        log "A2DP2FM_FORCE_INSTALL=1 set; continuing despite unsupported board" >&2
+      else
+        log "(Set A2DP2FM_FORCE_INSTALL=1 to install anyway.)" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
 perform_uninstall() {
   log "Uninstalling Bluetooth A2DP -> FM setup"
   local services=(
@@ -275,6 +296,7 @@ if (( UNINSTALL )); then
 fi
 
 check_required_commands
+check_fm_hardware_support
 
 if (( DRY_RUN )); then
   log "DRY RUN: no changes will be made"
@@ -715,7 +737,7 @@ log "AVRCP -> RDS (PS/RT) daemon"
 cat >"$BIN_DIR/avrcp_rds.py" <<'PYAV'
 #!/usr/bin/env python3
 """AVRCP metadata to RDS PS/RT daemon."""
-import dbus, gi, logging, re
+import dbus, gi, logging, os, re, time
 gi.require_version('GLib', '2.0')
 from gi.repository import GLib
 
@@ -737,13 +759,33 @@ def safe_rt(title: str, artist: str, album: str) -> str:
   txt=re.sub(r"[\r\n\t]+"," ",txt).strip()
   return txt[:64]
 def write_rds(ps: str = None, rt: str = None) -> None:
-  """Write PS/RT commands to RDS FIFO."""
+  """Write PS/RT to the RDS FIFO without blocking.
+
+  pi_fm_rds (the FIFO reader) only runs while audio is flowing. A plain
+  open() blocks until a reader appears, wedging this daemon; instead retry
+  a non-blocking open briefly, then drop the update if no transmitter is
+  listening (it re-announces on the next track change anyway).
+  """
+  data = ""
+  if ps is not None: data += f"PS {ps}\n"
+  if rt is not None: data += f"RT {rt}\n"
+  if not data: return
+  fd = None
+  for _ in range(5):
+    try:
+      fd = os.open(RDSCTL, os.O_WRONLY | os.O_NONBLOCK)
+      break
+    except OSError:
+      time.sleep(0.4)  # ENXIO: no reader yet
+  if fd is None:
+    logger.info("RDS FIFO has no reader (transmitter idle); dropping update")
+    return
   try:
-    with open(RDSCTL,"w") as f:
-      if ps is not None: f.write(f"PS {ps}\n")
-      if rt is not None: f.write(f"RT {rt}\n")
-  except Exception as e:
+    os.write(fd, data.encode())
+  except OSError as e:
     logger.warning(f"Failed to write RDS FIFO: {e}")
+  finally:
+    os.close(fd)
 def on_props_changed(interface: str, changed: dict, invalidated: list, path: str) -> None:
   """Handle BlueZ MediaPlayer1 property changes."""
   if interface!="org.bluez.MediaPlayer1": return
