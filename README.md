@@ -108,11 +108,11 @@ Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is pro
 
 ## Quick setup
 
-> 💡 When either installer starts, it auto-detects your Pi model (Zero family,
-> full-size boards, Pi 400/500, or a generic fallback) and prints a terminal
-> diagram of that board with the antenna pin — **GPIO4, physical pin 7** —
-> highlighted, along with antenna wire guidance. Run with `--dry-run` to see
-> the diagram without installing anything.
+> 💡 When either installer finishes, it auto-detects your Pi model (Zero
+> family, full-size boards, Pi 400/500, or a generic fallback) and prints a
+> terminal diagram of that board with the antenna pin — **GPIO4, physical
+> pin 7** — highlighted, along with antenna wire guidance. Run with
+> `--dry-run` to see the diagram without installing anything.
 
 ### Bluetooth
 

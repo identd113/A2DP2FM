@@ -23,10 +23,10 @@ The two pathways share hardware (GPIO 4, ACT LED) and some installed assets (`le
 
 Both installers carry identical `detect_pi_board()` / `show_board_art()`
 functions (duplicated, like `ledctl.sh` — the installers stay standalone).
-At startup they read `/proc/device-tree/model` (override with
-`A2DP2FM_PI_MODEL` for testing or non-Pi machines) and print a board diagram
-highlighting GPIO4 / pin 7 plus antenna wire guidance, before any install
-action runs (and in `--dry-run`). Categories:
+They read `/proc/device-tree/model` (override with `A2DP2FM_PI_MODEL` for
+testing or non-Pi machines) and print a board diagram highlighting GPIO4 /
+pin 7 plus antenna wire guidance after the install-complete banner (and at
+the end of `--dry-run` output). Categories:
 
 | Layout | Match | Boards |
 |--------|-------|--------|

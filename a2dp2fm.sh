@@ -276,9 +276,6 @@ fi
 
 check_required_commands
 
-detect_pi_board
-show_board_art
-
 if (( DRY_RUN )); then
   log "DRY RUN: no changes will be made"
   log "Would install packages: bluez bluez-tools alsa-utils sox jq libttspico-utils espeak-ng and build tools"
@@ -288,6 +285,8 @@ if (( DRY_RUN )); then
   log "Would deploy helper scripts to $BIN_DIR and $SBIN_DIR"
   log "Would register 6 systemd units: bt-setup bt-agent bt2fm bt-volume-freqd avrcp-rds led-statusd bluealsa"
   log "Would configure GPIO4 and ACT LED"
+  detect_pi_board
+  show_board_art
   exit 0
 fi
 
@@ -871,7 +870,7 @@ INSTALL COMPLETE (with LED)
 
 • Default frequency: $FREQ MHz   step: $STEP MHz   range: $FMIN - $FMAX MHz
 • Antenna: connect a short 10–20 cm wire to GPIO4 (pin 7) — see the board
-  diagram shown at the start of this install. Keep it short to stay polite.
+  diagram below. Keep it short to stay polite.
 • Pair your phone with the Pi (name: 'raspberrypi'), ensure Media audio is enabled.
 • Play audio; tune a radio to $FREQ MHz.
 • Use phone volume keys while playback is paused to change frequency (playing = normal volume). Pi flashes LED (3 quick) and announces new station.
@@ -892,3 +891,6 @@ Notes:
 Enjoy!
 ================================================================================
 DONE
+
+detect_pi_board
+show_board_art

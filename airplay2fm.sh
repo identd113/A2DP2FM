@@ -247,9 +247,6 @@ if (( UNINSTALL )); then perform_uninstall; exit 0; fi
 
 check_required_commands
 
-detect_pi_board
-show_board_art
-
 if (( DRY_RUN )); then
   log "DRY RUN: no changes will be made"
   log "Would install packages: shairport-sync avahi-daemon alsa-utils TTS build tools"
@@ -259,6 +256,8 @@ if (( DRY_RUN )); then
   log "Would write /etc/default/airplay2fm  FREQ=$FREQ STEP=$STEP FMIN=$FMIN FMAX=$FMAX AP_NAME=$AP_NAME"
   log "Would deploy scripts to $BIN_DIR: airplay2fm.sh airplay-rds.py led-airplay-statusd.sh"
   log "Would register systemd units: shairport-sync airplay2fm airplay-rds led-airplay-statusd"
+  detect_pi_board
+  show_board_art
   exit 0
 fi
 
@@ -750,7 +749,7 @@ INSTALL COMPLETE (AirPlay -> FM)
   (Appears in iOS Control Center / macOS audio output selector)
 • FM frequency:    ${FREQ} MHz   step: ${STEP} MHz   range: ${FMIN} - ${FMAX} MHz
 • Antenna:         Connect a 10-20 cm wire to GPIO4 (pin 7) — see the board
-                   diagram shown at the start of this install.
+                   diagram below.
 
 How to use:
   1. Ensure your iPhone/Mac is on the same Wi-Fi network as the Pi.
@@ -778,3 +777,6 @@ Notes:
 Enjoy!
 ================================================================================
 DONE
+
+detect_pi_board
+show_board_art
