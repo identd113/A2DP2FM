@@ -62,9 +62,23 @@ Live testing drove three iterations, all validated on hardware:
    multi-burst run of +11 clicks applying 87.9→90.1 in a single move,
    including a mixed-direction burst correctly netting +2.
 
+### DACP volume restore (same evening)
+Tuning clicks move the sender's AirPlay volume; the daemon now undoes
+them over the DACP back-channel. Live findings on the Pi 3 + iPhone:
+- mDNS discovery of the sender's control endpoint works
+  (`iTunes_Ctrl_<DACP-ID>` via avahi-browse; port changes per session).
+- `setproperty?dmcp.device-volume=<dB>` returns HTTP 200 but iOS does
+  not apply it.
+- Discrete `volumeup`/`volumedown` commands deliver, but iOS only
+  applies volume commands while playing — the undo is deferred until
+  playback resumes (validated in unit tests; visual confirmation of the
+  bar restoring on resume pending user retest).
+
 ### Outstanding
 - Radio-side confirmation (FM audio audible, RDS text displayed) pending
   antenna wire installation on the test Pi.
+- Visual confirmation that the deferred volume undo moves the sender's
+  volume bar on resume.
 - BlueALSA capture addressing (`DEV=` parameter) needs verification on a
   physical Pi — see TODO.md "FM Code Review Findings".
 

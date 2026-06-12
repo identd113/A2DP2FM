@@ -37,6 +37,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
 * **Volume-key frequency control** – Press the sender's volume buttons while playback is **paused** to shift the FM frequency. Rapid presses are batched: ~3 s after the last press, the net change applies in one move (3 up-clicks = +0.6 MHz at the default 0.2 step), announced on the old frequency and confirmed on the new one. During playback the volume buttons work normally.
+* **Automatic volume restore** – Tuning clicks necessarily move your device's AirPlay volume; the Pi undoes them over the AirPlay remote-control back-channel (DACP) as soon as playback resumes, so tuning leaves your volume exactly where it was.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
 ## Hardware requirements
@@ -273,7 +274,7 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. To change frequency: **pause, then press volume up/down right away** (iOS only routes the buttons to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with the LED flash, an announcement on the old frequency, and confirmation on the new one. (Tips: if volume is at maximum, "up" presses send no event — nudge down once first. During playback, volume buttons control volume as normal.)
+6. To change frequency: **pause, then press volume up/down right away** (iOS only routes the buttons to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with the LED flash, an announcement on the old frequency, and confirmation on the new one. When you resume playback, the Pi automatically undoes the volume movement your clicks caused, so your volume comes back where it was. (Tips: if volume is at maximum, "up" presses send no event — nudge down once first. During playback, volume buttons control volume as normal.)
 7. You can also change frequency by editing `/etc/default/airplay2fm` and restarting services (see Configuration below).
 
 ### LED behavior

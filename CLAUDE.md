@@ -90,6 +90,13 @@ tools (`tests/bin/`); the AirPlay path and anything touching real hardware
   audio/metadata FIFOs in /run must be 0666, not 0660 pi:pi — otherwise
   the first AirPlay stream dies with "Permission denied" opening the pipe
   (seen on real hardware). The tmpfiles.d entries encode this.
+- **iOS volume routing (all hardware-learned):** the rocker reaches the
+  AirPlay session only while playing plus ~2–3 s after pausing; DACP
+  `setproperty?dmcp.device-volume` returns HTTP 200 but is ignored —
+  use discrete `volumeup`/`volumedown` commands instead; and iOS only
+  *applies* DACP volume commands while playing, so the post-tuning
+  volume undo must be deferred until playback resumes. Suppress the
+  undo's pvol echoes or you get a feedback loop.
 
 ## Conventions
 
