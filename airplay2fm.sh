@@ -663,24 +663,35 @@ def dacp_discover():
     logger.info("DACP endpoint not advertised by sender")
     return None
 
-def restore_sender_volume(vol):
-    """Command the sender to restore its volume bar (best effort)."""
+def restore_sender_volume(steps, vol_before):
+    """Undo the tuning clicks on the sender (best effort): send the same
+    number of opposite discrete volume commands over DACP. (setproperty
+    with a dB value returns HTTP 200 but iOS ignores it; volumeup/down
+    are the DACP equivalents of physical clicks and need no scale.)"""
     global _suppress_until, _dacp_addr
-    if vol is None or not _active_remote:
+    if not steps or not _active_remote:
         return
     addr = dacp_discover()
     if not addr:
         return
     host, port = addr
-    url = f"http://{host}:{port}/ctrl-int/1/setproperty?dmcp.device-volume={vol}"
-    req = urllib.request.Request(url, headers={"Active-Remote": _active_remote})
-    _suppress_until = time.time() + 3.0  # the restore echoes back as pvol
+    cmd = "volumedown" if steps > 0 else "volumeup"
+    n = abs(steps)
+    # every command echoes back as a pvol event; keep them all suppressed
+    _suppress_until = time.time() + 3.0 + 0.4 * n
+    sent = 0
     try:
-        with urllib.request.urlopen(req, timeout=3) as r:
-            logger.info(f"Restored sender volume to {vol} (HTTP {r.status})")
+        for _ in range(n):
+            req = urllib.request.Request(
+                f"http://{host}:{port}/ctrl-int/1/{cmd}",
+                headers={"Active-Remote": _active_remote})
+            with urllib.request.urlopen(req, timeout=3):
+                sent += 1
+            time.sleep(0.25)
+        logger.info(f"Restored sender volume: {n}x {cmd} (was {vol_before})")
     except Exception as e:
         _dacp_addr = None  # endpoint may be stale; rediscover next time
-        logger.warning(f"Sender volume restore failed: {e}")
+        logger.warning(f"Sender volume restore failed after {sent}/{n}: {e}")
 
 def queue_click(direction, prev_vol):
     global _pending_steps, _last_click, _vol_before
@@ -713,7 +724,7 @@ def apply_pending():
     new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
         # Clamped to no-op: the clicks still moved the sender volume
-        restore_sender_volume(restore_vol)
+        restore_sender_volume(steps, restore_vol)
         return
     write_freq(new)
     logger.info(f"Frequency change: {cur} -> {new} MHz ({steps:+d} clicks)")
@@ -722,7 +733,7 @@ def apply_pending():
             subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
         except Exception as e:
             logger.warning(f"Announce failed: {e}")
-    restore_sender_volume(restore_vol)
+    restore_sender_volume(steps, restore_vol)
 
 def bump_worker():
     while True:
