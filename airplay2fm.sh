@@ -625,9 +625,18 @@ def write_freq(new):
 # is applied after DEBOUNCE_S of quiet -- 3 up-clicks = +3*STEP, announced
 # once. The worker thread keeps announcements off the metadata-reader loop.
 DEBOUNCE_S = 3.0
+# While PLAYING, iOS routes the rocker to AirPlay volume, so single presses
+# must stay ordinary volume control. A rapid burst (BURST_MIN+ clicks each
+# within BURST_GAP_S of the last) is treated as a tuning gesture instead;
+# every click in the burst counts as one step. While paused, every click
+# counts directly (iOS only routes presses briefly after pausing).
+BURST_GAP_S = 0.7
+BURST_MIN   = 3
 _pending_lock  = threading.Lock()
 _pending_steps = 0
 _last_click    = 0.0
+_burst_steps   = []
+_last_pvol     = 0.0
 
 def queue_click(direction):
     global _pending_steps, _last_click
@@ -636,6 +645,33 @@ def queue_click(direction):
         _last_click = time.time()
         pending = _pending_steps
     logger.info(f"Volume click {direction} queued (net {pending:+d})")
+
+def note_burst_click(direction, now):
+    """Record a click that arrived during playback (possible gesture)."""
+    global _last_pvol
+    with _pending_lock:
+        if now - _last_pvol > BURST_GAP_S:
+            _burst_steps.clear()
+        _burst_steps.append(1 if direction == "up" else -1)
+        _last_pvol = now
+
+def evaluate_burst():
+    """Once a playing-state burst ends, decide: tuning gesture or volume."""
+    global _pending_steps, _last_click
+    with _pending_lock:
+        if not _burst_steps or (time.time() - _last_pvol) <= BURST_GAP_S:
+            return
+        clicks = list(_burst_steps)
+        _burst_steps.clear()
+        if len(clicks) < BURST_MIN:
+            return  # ordinary volume adjustment; leave it alone
+        net = sum(clicks)
+        if net == 0:
+            return
+        _pending_steps += net
+        _last_click = time.time()
+        pending = _pending_steps
+    logger.info(f"Tuning gesture: {len(clicks)} rapid clicks, net {net:+d} (pending {pending:+d})")
 
 def apply_pending():
     """Apply the accumulated clicks once the quiet window has elapsed."""
@@ -667,6 +703,7 @@ def apply_pending():
 def bump_worker():
     while True:
         time.sleep(0.25)
+        evaluate_burst()
         apply_pending()
 
 def decode_data(el):
@@ -776,12 +813,17 @@ def main():
                             logger.info("Stream started/resumed")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
-                            play_state, last_vol = "active", None
+                            play_state = "active"
+                            # pvol is an absolute dB value: keep the baseline
+                            # across pause/resume so no click gets eaten;
+                            # reset only at the start of a new session.
+                            if code == "pbeg":
+                                last_vol = None
                         elif code in ("pend", "pfls"):
                             logger.info("Stream ended/paused")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
-                            play_state, last_vol = "paused", None
+                            play_state = "paused"
                         elif code == "pvol":
                             # "airplay_volume,volume,lowest,highest"; first
                             # field is -144 (mute) or -30..0 dB attenuation
@@ -789,11 +831,15 @@ def main():
                                 vol = float(value.split(",")[0])
                             except (ValueError, IndexError):
                                 continue
+                            logger.debug(f"pvol {vol} (state={play_state})")
                             prev, last_vol = last_vol, vol
-                            if prev is None or play_state == "active":
+                            if prev is None or vol == prev:
                                 continue
-                            if   vol > prev: queue_click("up")
-                            elif vol < prev: queue_click("down")
+                            direction = "up" if vol > prev else "down"
+                            if play_state == "active":
+                                note_burst_click(direction, time.time())
+                            else:
+                                queue_click(direction)
                         elif code == "mden":
                             # metadata-end (ssnc type): all core track fields received
                             if title or artist:
