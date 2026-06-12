@@ -36,7 +36,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Zero-config AirPlay discovery** – Advertises itself on the local network via Avahi/Bonjour; appears instantly in iOS Control Center and macOS audio output.
 * **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
-* **Volume-key frequency control** – Press the sender's volume buttons while playback is **paused** to shift the FM frequency by the configured step. The LED flashes and the move is announced over FM on the old frequency, then confirmed on the new one. During playback the volume buttons work normally.
+* **Volume-key frequency control** – Press the sender's volume buttons while playback is **paused** to shift the FM frequency. Rapid presses are batched: ~3 s after the last press, the net change applies in one move (3 up-clicks = +0.6 MHz at the default 0.2 step), announced on the old frequency and confirmed on the new one. During playback the volume buttons work normally.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
 ## Hardware requirements
@@ -262,7 +262,7 @@ What the installer does:
 1. Pair your phone with the Pi (default hostname `raspberrypi`). Ensure **Media Audio** (A2DP) is enabled.
 2. Tune a nearby FM radio to the configured frequency.
 3. Start playing audio on the phone.
-4. Press volume **down** or **up** while playback is **paused** to shift the FM frequency by the configured step. During playback, volume buttons work normally.
+4. Press volume **down** or **up** while playback is **paused** to shift the FM frequency. Rapid presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz at the default step). During playback, volume buttons work normally.
 5. Each frequency change flashes the LED three times, announces the move on the old frequency, then confirms on the new one.
 6. RDS displays Artist / Title / Album on compatible radios.
 
@@ -273,7 +273,7 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. Press volume **up** or **down** while playback is **paused** to shift the FM frequency by the configured step — the LED flashes three times, the move is announced on the old frequency, then confirmed on the new one. During playback, volume buttons control volume as normal.
+6. Press volume **up** or **down** while playback is **paused** to shift the FM frequency. Rapid presses are batched — ~3 s after the last press, the net change applies in one move, with the LED flash, an announcement on the old frequency, and confirmation on the new one. (Tip: if volume is already at maximum, "up" presses send no event — nudge down once first.) During playback, volume buttons control volume as normal.
 7. You can also change frequency by editing `/etc/default/airplay2fm` and restarting services (see Configuration below).
 
 ### LED behavior

@@ -570,10 +570,11 @@ systemctl stop airplay2fm.service >/dev/null 2>&1 || true
 # Tell listeners on the old frequency where to go, then confirm on the new one
 if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
   say "Moving to $(fmt "$TARGET_FREQ") megahertz."
-  sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV"
+  # pi_fm_rds does not exit at end-of-file; bound the transmission
+  timeout 8 sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV" || true
 fi
 say "Broadcasting at $(fmt "$TARGET_FREQ") megahertz."
-sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV"
+timeout 8 sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV" || true
 sleep 0.5
 systemctl start airplay2fm.service >/dev/null 2>&1 || true
 AANN
@@ -586,7 +587,7 @@ cat >"$BIN_DIR/airplay-rds.py" <<'PYAP'
 #!/usr/bin/env python3
 """Read shairport-sync metadata pipe: update RDS PS/RT and shift the FM
 frequency when the sender's volume keys are pressed while paused."""
-import base64, logging, os, re, subprocess, time
+import base64, logging, os, re, subprocess, threading, time
 from xml.etree import ElementTree as ET
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -620,8 +621,29 @@ def write_freq(new):
     except OSError as e:
         logger.warning(f"Config write failed: {e}")
 
-def bump_freq(direction):
-    """Shift FREQ by STEP within [FMIN, FMAX], then announce + restart."""
+# Volume clicks are batched: rapid presses accumulate and the net change
+# is applied after DEBOUNCE_S of quiet -- 3 up-clicks = +3*STEP, announced
+# once. The worker thread keeps announcements off the metadata-reader loop.
+DEBOUNCE_S = 3.0
+_pending_lock  = threading.Lock()
+_pending_steps = 0
+_last_click    = 0.0
+
+def queue_click(direction):
+    global _pending_steps, _last_click
+    with _pending_lock:
+        _pending_steps += 1 if direction == "up" else -1
+        _last_click = time.time()
+        pending = _pending_steps
+    logger.info(f"Volume click {direction} queued (net {pending:+d})")
+
+def apply_pending():
+    """Apply the accumulated clicks once the quiet window has elapsed."""
+    global _pending_steps
+    with _pending_lock:
+        if _pending_steps == 0 or (time.time() - _last_click) < DEBOUNCE_S:
+            return
+        steps, _pending_steps = _pending_steps, 0
     cfg = read_config()
     try:
         cur  = float(cfg.get("FREQ", "87.9"))
@@ -631,17 +653,21 @@ def bump_freq(direction):
     except ValueError as e:
         logger.warning(f"Bad config value: {e}")
         return
-    new = round(min(max(cur + (step if direction == "up" else -step), fmin), fmax), 1)
+    new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
         return
     write_freq(new)
-    logger.info(f"Frequency {direction}: {cur} -> {new} MHz")
-    # Blocks for the announcements (~15 s); serializes rapid key presses.
+    logger.info(f"Frequency change: {cur} -> {new} MHz ({steps:+d} clicks)")
     if os.access(ANNOUNCE, os.X_OK):
         try:
             subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
         except Exception as e:
             logger.warning(f"Announce failed: {e}")
+
+def bump_worker():
+    while True:
+        time.sleep(0.25)
+        apply_pending()
 
 def decode_data(el):
     if el is None:
@@ -736,6 +762,7 @@ def parse_items(pipe_file):
 
 def main():
     write_rds(ps="AP-PI", rt="AirPlay audio")
+    threading.Thread(target=bump_worker, daemon=True).start()
     title = artist = album = ""
     play_state = "idle"   # volume keys only shift frequency while paused
     last_vol   = None     # baseline; first pvol after a state change sets it
@@ -765,8 +792,8 @@ def main():
                             prev, last_vol = last_vol, vol
                             if prev is None or play_state == "active":
                                 continue
-                            if   vol > prev: bump_freq("up")
-                            elif vol < prev: bump_freq("down")
+                            if   vol > prev: queue_click("up")
+                            elif vol < prev: queue_click("down")
                         elif code == "mden":
                             # metadata-end (ssnc type): all core track fields received
                             if title or artist:

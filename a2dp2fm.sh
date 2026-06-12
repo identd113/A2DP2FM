@@ -660,10 +660,11 @@ systemctl stop bt2fm.service >/dev/null 2>&1 || true
 # Tell listeners on the old frequency where to go, then confirm on the new one
 if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
   say "Moving to $(fmt "$TARGET_FREQ") megahertz."
-  sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV"
+  # pi_fm_rds does not exit at end-of-file; bound the transmission
+  timeout 8 sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV" || true
 fi
 say "Broadcasting at $(fmt "$TARGET_FREQ") megahertz."
-sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV"
+timeout 8 sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV" || true
 sleep 0.5
 systemctl start bt2fm.service >/dev/null 2>&1 || true
 FANN
@@ -682,9 +683,15 @@ echo "idle" > "$PLAYSTATE"
 read_current_freq(){ grep -E '^FREQ=' /etc/default/bt2fm | cut -d= -f2; }
 write_freq(){ sed -i "s/^FREQ=.*/FREQ=$1/" /etc/default/bt2fm; }
 clamp(){ awk -v v="$1" -v lo="$FMIN" -v hi="$FMAX" 'BEGIN{ if(v<lo)v=lo; if(v>hi)v=hi; printf "%.1f", v }'; }
-bump(){
-  local dir="$1" cur new; cur="$(read_current_freq)"
-  if [[ "$dir" == up ]]; then new=$(awk -v f="$cur" -v s="$STEP" 'BEGIN{printf "%.3f", f+s}'); else new=$(awk -v f="$cur" -v s="$STEP" 'BEGIN{printf "%.3f", f-s}'); fi
+# Volume clicks are batched: rapid presses accumulate and the net change is
+# applied after ~3s of quiet -- 3 up-clicks = +3*STEP, announced once.
+flush_pending(){
+  local steps=$pending
+  pending=0
+  (( steps != 0 )) || return 0
+  local cur new
+  cur="$(read_current_freq)"
+  new=$(awk -v f="$cur" -v s="$STEP" -v n="$steps" 'BEGIN{printf "%.3f", f+n*s}')
   new="$(clamp "$new")"
   if [[ "$new" != "$cur" ]]; then
     write_freq "$new"
@@ -706,27 +713,37 @@ dbus-monitor --system "type='signal',sender='org.bluez',interface='org.freedeskt
   }
   /^signal/ { in_t=0; field=""; next }
 ' \
-| while read -r KIND VALUE; do
-    case "$KIND" in
-      VOL)
-        [[ -z "${VALUE:-}" ]] && continue
-        last="$(cat "$STATE" 2>/dev/null || echo -1)"
-        echo "$VALUE" > "$STATE"
-        [[ "$last" -lt 0 ]] && continue
-        play_state="$(cat "$PLAYSTATE" 2>/dev/null || echo idle)"
-        [[ "$play_state" == "active" ]] && continue
-        if   [[ "$VALUE" -gt "$last" ]]; then bump up
-        elif [[ "$VALUE" -lt "$last" ]]; then bump down
-        fi
-        ;;
-      STATE)
-        [[ -z "${VALUE:-}" ]] && continue
-        echo "$VALUE" > "$PLAYSTATE"
-        # Reset baseline on any state change so the next volume event establishes direction
-        echo "-1" > "$STATE"
-        ;;
-    esac
-  done
+| { pending=0; last_click=0
+  while true; do
+    if read -r -t 0.5 KIND VALUE; then
+      case "$KIND" in
+        VOL)
+          [[ -z "${VALUE:-}" ]] && continue
+          last="$(cat "$STATE" 2>/dev/null || echo -1)"
+          echo "$VALUE" > "$STATE"
+          [[ "$last" -lt 0 ]] && continue
+          play_state="$(cat "$PLAYSTATE" 2>/dev/null || echo idle)"
+          [[ "$play_state" == "active" ]] && continue
+          if   [[ "$VALUE" -gt "$last" ]]; then pending=$((pending+1)); last_click=$SECONDS
+          elif [[ "$VALUE" -lt "$last" ]]; then pending=$((pending-1)); last_click=$SECONDS
+          fi
+          ;;
+        STATE)
+          [[ -z "${VALUE:-}" ]] && continue
+          echo "$VALUE" > "$PLAYSTATE"
+          # Reset baseline on any state change so the next volume event establishes direction
+          echo "-1" > "$STATE"
+          ;;
+      esac
+    elif (( $? <= 128 )); then
+      # EOF (not a read timeout): dbus-monitor died; exit so systemd restarts us
+      break
+    fi
+    # Quiet window elapsed: apply the net change in a single announcement
+    if (( pending != 0 )) && (( SECONDS - last_click >= 3 )); then
+      flush_pending
+    fi
+  done; }
 BVOLD
 finalize_script "$BIN_DIR/bt-volume-freqd.sh"
 INSTALL_SUMMARY+=("Deployed $BIN_DIR/bt-volume-freqd.sh")
