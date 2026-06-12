@@ -273,7 +273,7 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. Press volume **up** or **down** while playback is **paused** to shift the FM frequency. Rapid presses are batched — ~3 s after the last press, the net change applies in one move, with the LED flash, an announcement on the old frequency, and confirmation on the new one. (Tip: if volume is already at maximum, "up" presses send no event — nudge down once first.) During playback, volume buttons control volume as normal.
+6. To change frequency: **pause, then press volume up/down right away** (iOS only routes the buttons to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with the LED flash, an announcement on the old frequency, and confirmation on the new one. (Tips: if volume is at maximum, "up" presses send no event — nudge down once first. During playback, volume buttons control volume as normal.)
 7. You can also change frequency by editing `/etc/default/airplay2fm` and restarting services (see Configuration below).
 
 ### LED behavior

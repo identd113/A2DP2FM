@@ -47,12 +47,24 @@ decoded and delivered to RDS ("RDS updated: 'Blocks w/ Neal Brennan' /
 'Prolific Standup Posting — Josh Johnson'"), LED status driving
 /sys/class/leds/ACT.
 
+### Volume-key tuning — hardware-validated (Pi 3 + iPhone, same day)
+Live testing drove three iterations, all validated on hardware:
+1. pi_fm_rds never exits when its announcement WAV ends — announce legs
+   are now bounded with `timeout 8`.
+2. iOS routes the volume rocker to AirPlay only while playing (plus a
+   ~2-3 s grace window after pausing). A rapid-click playing-state
+   gesture was prototyped and validated, then removed by product
+   decision: tuning is paused-only (click promptly after pausing). The
+   pvol baseline persists across pause/resume so no click is consumed
+   re-establishing it.
+3. Click batching (net change applied after 3 s of quiet, one announce)
+   confirmed end to end: 87.9→88.3 (+2), 88.3→87.9 (−2), and a stacked
+   multi-burst run of +11 clicks applying 87.9→90.1 in a single move,
+   including a mixed-direction burst correctly netting +2.
+
 ### Outstanding
 - Radio-side confirmation (FM audio audible, RDS text displayed) pending
   antenna wire installation on the test Pi.
-- AirPlay volume-key frequency control (pvol events while paused) is new
-  and needs hardware verification — in particular whether iOS keeps
-  sending volume events to the AirPlay route while playback is paused.
 - BlueALSA capture addressing (`DEV=` parameter) needs verification on a
   physical Pi — see TODO.md "FM Code Review Findings".
 
