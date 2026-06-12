@@ -637,9 +637,10 @@ _active_remote = None   # ssnc/acre token, required header for DACP calls
 _dacp_addr     = None   # cached (host, port) of the sender's control service
 _vol_before    = None   # sender volume before the first click of a batch
 _suppress_until = 0.0   # ignore pvol echoes of our own restore command
-_restore_steps = 0      # net tuning clicks awaiting undo on the sender
+_restore_target = None  # sender volume (dB) to restore after tuning
 _restore_at    = 0.0    # when to send the undo (set when playback resumes;
                         # iOS only applies volume commands while playing)
+_current_vol   = None   # latest pvol value seen (updated on every event)
 
 def dacp_discover():
     """Resolve the sender's DACP endpoint via mDNS (iTunes_Ctrl_<DACP-ID>)."""
@@ -666,55 +667,62 @@ def dacp_discover():
     logger.info("DACP endpoint not advertised by sender")
     return None
 
-def defer_restore(steps):
+def defer_restore(steps, vol_before):
     """Park the undo until playback resumes — iOS accepts DACP volume
-    commands while paused (HTTP 200) but does not apply them."""
-    global _restore_steps
-    if not steps:
+    commands while paused (HTTP 200) but does not apply them. The target
+    is the volume before the EARLIEST un-restored batch."""
+    global _restore_target
+    if not steps or vol_before is None:
         return
     with _pending_lock:
-        _restore_steps += steps
-        pending = _restore_steps
-    logger.info(f"Volume restore deferred until playback resumes ({pending:+d} clicks to undo)")
+        if _restore_target is None:
+            _restore_target = vol_before
+        target = _restore_target
+    logger.info(f"Volume restore deferred until playback resumes (target {target})")
 
 def maybe_restore():
     """Run from the worker: send the undo once playback has resumed."""
-    global _restore_steps
+    global _restore_target
     with _pending_lock:
-        if _restore_steps == 0 or _restore_at == 0.0 or time.time() < _restore_at:
+        if _restore_target is None or _restore_at == 0.0 or time.time() < _restore_at:
             return
-        steps, _restore_steps = _restore_steps, 0
-    restore_sender_volume(steps)
+        target, _restore_target = _restore_target, None
+    restore_sender_volume_to(target)
 
-def restore_sender_volume(steps):
-    """Undo the tuning clicks on the sender (best effort): send the same
-    number of opposite discrete volume commands over DACP. (setproperty
-    with a dB value returns HTTP 200 but iOS ignores it; volumeup/down
-    are the DACP equivalents of physical clicks and need no scale.)"""
+def restore_sender_volume_to(target):
+    """Closed-loop restore: nudge the sender's volume one click at a time
+    toward the target, watching the pvol echoes to verify each step
+    actually applied (iOS drops commands sent too early after resume).
+    (setproperty with a dB value returns HTTP 200 but iOS ignores it;
+    discrete volumeup/volumedown are the only commands it applies.)"""
     global _suppress_until, _dacp_addr
-    if not steps or not _active_remote:
+    if target is None or not _active_remote:
         return
     addr = dacp_discover()
     if not addr:
         return
     host, port = addr
-    cmd = "volumedown" if steps > 0 else "volumeup"
-    n = abs(steps)
-    # every command echoes back as a pvol event; keep them all suppressed
-    _suppress_until = time.time() + 3.0 + 0.4 * n
     sent = 0
     try:
-        for _ in range(n):
+        for _ in range(24):  # iOS rocker steps are 1.875 dB; 16 spans the range
+            cur = _current_vol
+            if cur is None:
+                break
+            diff = target - cur
+            if abs(diff) < 1.0:  # within half a click of the target
+                break
+            cmd = "volumeup" if diff > 0 else "volumedown"
+            _suppress_until = time.time() + 3.0
             req = urllib.request.Request(
                 f"http://{host}:{port}/ctrl-int/1/{cmd}",
                 headers={"Active-Remote": _active_remote})
             with urllib.request.urlopen(req, timeout=3):
                 sent += 1
-            time.sleep(0.25)
-        logger.info(f"Restored sender volume: {n}x {cmd}")
+            time.sleep(0.5)  # let the echo update _current_vol
+        logger.info(f"Volume restore: target {target}, now {_current_vol} ({sent} commands)")
     except Exception as e:
         _dacp_addr = None  # endpoint may be stale; rediscover next time
-        logger.warning(f"Sender volume restore failed after {sent}/{n}: {e}")
+        logger.warning(f"Volume restore failed after {sent} commands: {e}")
 
 def queue_click(direction, prev_vol):
     global _pending_steps, _last_click, _vol_before
@@ -747,7 +755,7 @@ def apply_pending():
     new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
         # Clamped to no-op: the clicks still moved the sender volume
-        defer_restore(steps)
+        defer_restore(steps, restore_vol)
         return
     write_freq(new)
     logger.info(f"Frequency change: {cur} -> {new} MHz ({steps:+d} clicks)")
@@ -756,7 +764,7 @@ def apply_pending():
             subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
         except Exception as e:
             logger.warning(f"Announce failed: {e}")
-    defer_restore(steps)
+    defer_restore(steps, restore_vol)
 
 def bump_worker():
     while True:
@@ -856,7 +864,7 @@ def parse_items(pipe_file):
                 pass
 
 def main():
-    global _dacp_id, _dacp_addr, _active_remote, _restore_steps, _restore_at
+    global _dacp_id, _dacp_addr, _active_remote, _restore_target, _restore_at, _current_vol
     write_rds(ps="AP-PI", rt="AirPlay audio")
     threading.Thread(target=bump_worker, daemon=True).start()
     title = artist = album = ""
@@ -879,10 +887,10 @@ def main():
                             if code == "pbeg":
                                 last_vol = None
                                 with _pending_lock:
-                                    _restore_steps = 0  # stale undo from a previous session
+                                    _restore_target = None  # stale undo from a previous session
                             # playback is live again: send any deferred undo
                             # shortly (iOS applies volume only while playing)
-                            _restore_at = time.time() + 0.7
+                            _restore_at = time.time() + 1.5
                         elif code in ("pend", "pfls"):
                             logger.info("Stream ended/paused")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
@@ -897,6 +905,7 @@ def main():
                             except (ValueError, IndexError):
                                 continue
                             logger.debug(f"pvol {vol} (state={play_state})")
+                            _current_vol = vol
                             prev, last_vol = last_vol, vol
                             # Tuning only while paused: during playback the
                             # rocker is ordinary volume control.
