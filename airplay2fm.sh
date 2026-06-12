@@ -637,6 +637,9 @@ _active_remote = None   # ssnc/acre token, required header for DACP calls
 _dacp_addr     = None   # cached (host, port) of the sender's control service
 _vol_before    = None   # sender volume before the first click of a batch
 _suppress_until = 0.0   # ignore pvol echoes of our own restore command
+_restore_steps = 0      # net tuning clicks awaiting undo on the sender
+_restore_at    = 0.0    # when to send the undo (set when playback resumes;
+                        # iOS only applies volume commands while playing)
 
 def dacp_discover():
     """Resolve the sender's DACP endpoint via mDNS (iTunes_Ctrl_<DACP-ID>)."""
@@ -663,7 +666,27 @@ def dacp_discover():
     logger.info("DACP endpoint not advertised by sender")
     return None
 
-def restore_sender_volume(steps, vol_before):
+def defer_restore(steps):
+    """Park the undo until playback resumes — iOS accepts DACP volume
+    commands while paused (HTTP 200) but does not apply them."""
+    global _restore_steps
+    if not steps:
+        return
+    with _pending_lock:
+        _restore_steps += steps
+        pending = _restore_steps
+    logger.info(f"Volume restore deferred until playback resumes ({pending:+d} clicks to undo)")
+
+def maybe_restore():
+    """Run from the worker: send the undo once playback has resumed."""
+    global _restore_steps
+    with _pending_lock:
+        if _restore_steps == 0 or _restore_at == 0.0 or time.time() < _restore_at:
+            return
+        steps, _restore_steps = _restore_steps, 0
+    restore_sender_volume(steps)
+
+def restore_sender_volume(steps):
     """Undo the tuning clicks on the sender (best effort): send the same
     number of opposite discrete volume commands over DACP. (setproperty
     with a dB value returns HTTP 200 but iOS ignores it; volumeup/down
@@ -688,7 +711,7 @@ def restore_sender_volume(steps, vol_before):
             with urllib.request.urlopen(req, timeout=3):
                 sent += 1
             time.sleep(0.25)
-        logger.info(f"Restored sender volume: {n}x {cmd} (was {vol_before})")
+        logger.info(f"Restored sender volume: {n}x {cmd}")
     except Exception as e:
         _dacp_addr = None  # endpoint may be stale; rediscover next time
         logger.warning(f"Sender volume restore failed after {sent}/{n}: {e}")
@@ -724,7 +747,7 @@ def apply_pending():
     new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
         # Clamped to no-op: the clicks still moved the sender volume
-        restore_sender_volume(steps, restore_vol)
+        defer_restore(steps)
         return
     write_freq(new)
     logger.info(f"Frequency change: {cur} -> {new} MHz ({steps:+d} clicks)")
@@ -733,12 +756,13 @@ def apply_pending():
             subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
         except Exception as e:
             logger.warning(f"Announce failed: {e}")
-    restore_sender_volume(steps, restore_vol)
+    defer_restore(steps)
 
 def bump_worker():
     while True:
         time.sleep(0.25)
         apply_pending()
+        maybe_restore()
 
 def decode_data(el):
     if el is None:
@@ -832,7 +856,7 @@ def parse_items(pipe_file):
                 pass
 
 def main():
-    global _dacp_id, _dacp_addr, _active_remote
+    global _dacp_id, _dacp_addr, _active_remote, _restore_steps, _restore_at
     write_rds(ps="AP-PI", rt="AirPlay audio")
     threading.Thread(target=bump_worker, daemon=True).start()
     title = artist = album = ""
@@ -854,11 +878,17 @@ def main():
                             # reset only at the start of a new session.
                             if code == "pbeg":
                                 last_vol = None
+                                with _pending_lock:
+                                    _restore_steps = 0  # stale undo from a previous session
+                            # playback is live again: send any deferred undo
+                            # shortly (iOS applies volume only while playing)
+                            _restore_at = time.time() + 0.7
                         elif code in ("pend", "pfls"):
                             logger.info("Stream ended/paused")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
                             play_state = "paused"
+                            _restore_at = 0.0  # hold the undo while paused
                         elif code == "pvol":
                             # "airplay_volume,volume,lowest,highest"; first
                             # field is -144 (mute) or -30..0 dB attenuation
