@@ -300,7 +300,7 @@ declare -a APT_PACKAGES=(
   git build-essential autoconf automake libtool pkg-config
   libssl-dev libavahi-client-dev libasound2-dev libpopt-dev libconfig-dev
   libdaemon-dev libsystemd-dev avahi-daemon libnss-mdns
-  alsa-utils sox jq libttspico-utils espeak-ng gawk python3
+  avahi-utils alsa-utils sox jq libttspico-utils espeak-ng gawk python3
 )
 
 SHAIRPORT_FROM_APT=0
@@ -587,7 +587,7 @@ cat >"$BIN_DIR/airplay-rds.py" <<'PYAP'
 #!/usr/bin/env python3
 """Read shairport-sync metadata pipe: update RDS PS/RT and shift the FM
 frequency when the sender's volume keys are pressed while paused."""
-import base64, logging, os, re, subprocess, threading, time
+import base64, logging, os, re, subprocess, threading, time, urllib.request
 from xml.etree import ElementTree as ET
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -629,9 +629,64 @@ _pending_lock  = threading.Lock()
 _pending_steps = 0
 _last_click    = 0.0
 
-def queue_click(direction):
-    global _pending_steps, _last_click
+# DACP back-channel: AirPlay senders run a remote-control service we can
+# command. After tuning clicks change the frequency, we snap the sender's
+# volume bar back to where it was before the first click (best effort).
+_dacp_id       = None   # ssnc/daid from the metadata stream
+_active_remote = None   # ssnc/acre token, required header for DACP calls
+_dacp_addr     = None   # cached (host, port) of the sender's control service
+_vol_before    = None   # sender volume before the first click of a batch
+_suppress_until = 0.0   # ignore pvol echoes of our own restore command
+
+def dacp_discover():
+    """Resolve the sender's DACP endpoint via mDNS (iTunes_Ctrl_<DACP-ID>)."""
+    global _dacp_addr
+    if _dacp_addr:
+        return _dacp_addr
+    if not _dacp_id:
+        return None
+    try:
+        out = subprocess.run(
+            ["avahi-browse", "-p", "-t", "-r", "_dacp._tcp"],
+            capture_output=True, text=True, timeout=6).stdout
+    except Exception as e:
+        logger.warning(f"DACP discovery failed: {e}")
+        return None
+    want = f"itunes_ctrl_{_dacp_id}".lower()
+    for line in out.splitlines():
+        f = line.split(";")
+        # =;<if>;IPv4;<name>;_dacp._tcp;local;<host>;<addr>;<port>;...
+        if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[3].lower() == want:
+            _dacp_addr = (f[7], int(f[8]))
+            logger.info(f"DACP endpoint: {f[7]}:{f[8]}")
+            return _dacp_addr
+    logger.info("DACP endpoint not advertised by sender")
+    return None
+
+def restore_sender_volume(vol):
+    """Command the sender to restore its volume bar (best effort)."""
+    global _suppress_until, _dacp_addr
+    if vol is None or not _active_remote:
+        return
+    addr = dacp_discover()
+    if not addr:
+        return
+    host, port = addr
+    url = f"http://{host}:{port}/ctrl-int/1/setproperty?dmcp.device-volume={vol}"
+    req = urllib.request.Request(url, headers={"Active-Remote": _active_remote})
+    _suppress_until = time.time() + 3.0  # the restore echoes back as pvol
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            logger.info(f"Restored sender volume to {vol} (HTTP {r.status})")
+    except Exception as e:
+        _dacp_addr = None  # endpoint may be stale; rediscover next time
+        logger.warning(f"Sender volume restore failed: {e}")
+
+def queue_click(direction, prev_vol):
+    global _pending_steps, _last_click, _vol_before
     with _pending_lock:
+        if _pending_steps == 0:
+            _vol_before = prev_vol  # sender volume before this batch began
         _pending_steps += 1 if direction == "up" else -1
         _last_click = time.time()
         pending = _pending_steps
@@ -640,11 +695,12 @@ def queue_click(direction):
 
 def apply_pending():
     """Apply the accumulated clicks once the quiet window has elapsed."""
-    global _pending_steps
+    global _pending_steps, _vol_before
     with _pending_lock:
         if _pending_steps == 0 or (time.time() - _last_click) < DEBOUNCE_S:
             return
         steps, _pending_steps = _pending_steps, 0
+        restore_vol, _vol_before = _vol_before, None
     cfg = read_config()
     try:
         cur  = float(cfg.get("FREQ", "87.9"))
@@ -656,6 +712,8 @@ def apply_pending():
         return
     new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
+        # Clamped to no-op: the clicks still moved the sender volume
+        restore_sender_volume(restore_vol)
         return
     write_freq(new)
     logger.info(f"Frequency change: {cur} -> {new} MHz ({steps:+d} clicks)")
@@ -664,6 +722,7 @@ def apply_pending():
             subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
         except Exception as e:
             logger.warning(f"Announce failed: {e}")
+    restore_sender_volume(restore_vol)
 
 def bump_worker():
     while True:
@@ -762,6 +821,7 @@ def parse_items(pipe_file):
                 pass
 
 def main():
+    global _dacp_id, _dacp_addr, _active_remote
     write_rds(ps="AP-PI", rt="AirPlay audio")
     threading.Thread(target=bump_worker, daemon=True).start()
     title = artist = album = ""
@@ -801,7 +861,15 @@ def main():
                             # rocker is ordinary volume control.
                             if prev is None or vol == prev or play_state == "active":
                                 continue
-                            queue_click("up" if vol > prev else "down")
+                            if time.time() < _suppress_until:
+                                continue  # echo of our own volume restore
+                            queue_click("up" if vol > prev else "down", prev)
+                        elif code == "daid":
+                            if value and value != _dacp_id:
+                                _dacp_id, _dacp_addr = value, None
+                        elif code == "acre":
+                            if value:
+                                _active_remote = value
                         elif code == "mden":
                             # metadata-end (ssnc type): all core track fields received
                             if title or artist:
