@@ -650,13 +650,19 @@ fi
 PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
 [ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
 TARGET_FREQ="${1:-$FREQ}"
+PREV_FREQ="${2:-}"
 TMPWAV="/run/fm_announce.wav"; mkdir -p /run
 say(){ if command -v pico2wave >/dev/null; then pico2wave -l en-US -w "$TMPWAV" "$1"; else espeak-ng -v en-us -s 160 -w "$TMPWAV" "$1"; fi; }
 fmt(){ awk -v f="$1" 'BEGIN{printf "%.1f", f}'; }
 # LED flash before announcement (if ledctl exists)
 command -v /usr/local/bin/ledctl.sh >/dev/null 2>&1 && /usr/local/bin/ledctl.sh flash3 || true
-MSG="Broadcasting at $(fmt "$TARGET_FREQ") megahertz."; say "$MSG"
 systemctl stop bt2fm.service >/dev/null 2>&1 || true
+# Tell listeners on the old frequency where to go, then confirm on the new one
+if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
+  say "Moving to $(fmt "$TARGET_FREQ") megahertz."
+  sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV"
+fi
+say "Broadcasting at $(fmt "$TARGET_FREQ") megahertz."
 sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV"
 sleep 0.5
 systemctl start bt2fm.service >/dev/null 2>&1 || true
@@ -684,7 +690,7 @@ bump(){
     write_freq "$new"
     # Flash LED right away if available
     command -v /usr/local/bin/ledctl.sh >/dev/null 2>&1 && /usr/local/bin/ledctl.sh flash3 || true
-    /usr/local/bin/fm_announce.sh "$new"
+    /usr/local/bin/fm_announce.sh "$new" "$cur"
   fi
 }
 dbus-monitor --system "type='signal',sender='org.bluez',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'" \

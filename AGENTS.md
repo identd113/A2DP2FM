@@ -66,7 +66,7 @@ both installers' copies identical.
 |---------|------|
 | `shairport-sync.service` | AirPlay receiver; writes raw PCM to `/run/airplay_audio` |
 | `airplay2fm.service` | Reads audio FIFO → PiFmRds pipeline |
-| `airplay-rds.service` | shairport-sync metadata → RDS FIFO |
+| `airplay-rds.service` | shairport-sync metadata → RDS FIFO + volume-key frequency control |
 | `led-airplay-statusd.service` | ACT LED driver for AirPlay state |
 
 All units include the comment `# Managed by a2dp2fm` (Bluetooth) or `# Managed by airplay2fm` (AirPlay) in their unit files. The uninstall logic uses these markers to distinguish installer-managed units from system-provided ones.
@@ -97,6 +97,7 @@ RT <64-char radiotext>
 
 - Bluetooth metadata comes from BlueZ AVRCP D-Bus signals (`avrcp_rds.py`).
 - AirPlay metadata comes from shairport-sync's XML metadata pipe at `/run/airplay_metadata` (`airplay-rds.py`). The `<type>` and `<code>` element values arrive hex-encoded (e.g. `73736e63` = `ssnc`); `airplay-rds.py` decodes them with `hex2ascii()` before comparing. The `mden` (metadata-end) event is type `ssnc`, not `core` — keep this in mind if modifying the metadata reader.
+- `airplay-rds.py` also implements volume-key frequency control from the same pipe: `ssnc`/`pvol` events carry `"airplay_volume,volume,lowest,highest"` (first field −144 = mute, else −30..0 dB). While playback is paused (`pfls`/`pend` seen), a volume change bumps `FREQ` by `STEP` within `[FMIN, FMAX]` and runs `airplay_announce.sh` (LED flash + TTS at the new frequency, stop/start of `airplay2fm.service`). The metadata pipe must have exactly one reader — never split `pvol` handling into a second process reading the same FIFO.
 
 ## FIFO Persistence
 

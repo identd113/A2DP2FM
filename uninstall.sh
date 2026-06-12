@@ -271,7 +271,7 @@ if (( REMOVE_AP && AP_FOUND )); then
      grep -q 'Managed by airplay2fm' /etc/systemd/system/shairport-sync.service 2>/dev/null; then
     echo "               shairport-sync  (unit written by airplay2fm)"
   fi
-  echo "    Scripts:   airplay2fm.sh  airplay-rds.py  led-airplay-statusd.sh"
+  echo "    Scripts:   airplay2fm.sh  airplay-rds.py  airplay_announce.sh  led-airplay-statusd.sh"
   echo "    Config:    /etc/default/airplay2fm  /etc/tmpfiles.d/airplay2fm.conf"
   echo "    FIFOs:     /run/airplay_audio  /run/airplay_metadata"
   echo "    Module:    snd-aloop removed from /etc/modules"
@@ -369,9 +369,11 @@ do_uninstall_airplay() {
   for f in \
     /usr/local/bin/airplay2fm.sh \
     /usr/local/bin/airplay-rds.py \
+    /usr/local/bin/airplay_announce.sh \
     /usr/local/bin/led-airplay-statusd.sh \
     /etc/default/airplay2fm \
     /etc/tmpfiles.d/airplay2fm.conf \
+    /run/airplay_announce.wav \
     /run/airplay_audio \
     /run/airplay_metadata; do
     rm_file "$f"

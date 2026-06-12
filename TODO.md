@@ -57,12 +57,10 @@ non-blocking RDS FIFO writes in both metadata daemons). The rest:*
 - **Status:** ⬜ Pending
 
 ### Review #5: Frequency-change announcement transmits on the new frequency
-- **Priority:** Low (UX)
-- **File(s):** fm_announce.sh (a2dp2fm.sh heredoc)
-- **Problem:** a listener still tuned to the old frequency hears nothing.
-  Better: announce "moving to X" on the old frequency first, then switch
-  and announce again.
-- **Status:** ⬜ Pending
+- **Status:** ✅ Completed (2026-06-11) — both pathways now announce
+  "Moving to X megahertz" on the old frequency, then "Broadcasting at X
+  megahertz" on the new one (`fm_announce.sh` and `airplay_announce.sh`
+  both take the previous frequency as a second argument).
 
 ### Review #7: ledctl.sh sudo calls flood the journal
 - **Priority:** Low (cosmetic, but very noisy)

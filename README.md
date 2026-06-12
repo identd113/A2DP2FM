@@ -28,7 +28,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Headless Bluetooth pairing** – Keeps the adapter powered, discoverable, and pairable after every boot; no screen or keyboard required.
 * **A2DP audio pipeline** – Captures audio via BlueALSA and feeds it into PiFmRds.
 * **Volume-key frequency control** – Monitors Bluetooth Absolute Volume so the phone's volume buttons shift the FM frequency while playback is paused.
-* **TTS station announcements** – Speaks the new frequency over FM after each channel change using `pico2wave` or `espeak-ng`.
+* **TTS station announcements** – After each channel change, announces "moving to X" on the old frequency (so listeners know where to retune), then confirms on the new one, using `pico2wave` or `espeak-ng`.
 * **AVRCP metadata to RDS** – Pushes track info from the connected phone into RDS PS/RT fields.
 
 ### AirPlay (`airplay2fm.sh`)
@@ -36,6 +36,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Zero-config AirPlay discovery** – Advertises itself on the local network via Avahi/Bonjour; appears instantly in iOS Control Center and macOS audio output.
 * **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
+* **Volume-key frequency control** – Press the sender's volume buttons while playback is **paused** to shift the FM frequency by the configured step. The LED flashes and the move is announced over FM on the old frequency, then confirmed on the new one. During playback the volume buttons work normally.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
 ## Hardware requirements
@@ -262,7 +263,7 @@ What the installer does:
 2. Tune a nearby FM radio to the configured frequency.
 3. Start playing audio on the phone.
 4. Press volume **down** or **up** while playback is **paused** to shift the FM frequency by the configured step. During playback, volume buttons work normally.
-5. Each frequency change flashes the LED three times and plays a TTS announcement of the new frequency.
+5. Each frequency change flashes the LED three times, announces the move on the old frequency, then confirms on the new one.
 6. RDS displays Artist / Title / Album on compatible radios.
 
 ### AirPlay
@@ -272,7 +273,8 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. To change frequency after install, edit `/etc/default/airplay2fm` and restart services (see Configuration below).
+6. Press volume **up** or **down** while playback is **paused** to shift the FM frequency by the configured step — the LED flashes three times, the move is announced on the old frequency, then confirmed on the new one. During playback, volume buttons control volume as normal.
+7. You can also change frequency by editing `/etc/default/airplay2fm` and restarting services (see Configuration below).
 
 ### LED behavior
 
@@ -281,7 +283,7 @@ What the installer does:
 | Slow blink | Discoverable / pairing mode | shairport-sync running, waiting for stream |
 | Double blink ~2 s | Device connected, not streaming | — |
 | Solid on | Streaming active | Streaming active |
-| Three quick flashes | Frequency changed (Bluetooth only) | — |
+| Three quick flashes | Frequency changed | Frequency changed |
 
 ## Service management
 

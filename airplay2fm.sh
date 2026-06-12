@@ -235,10 +235,12 @@ perform_uninstall() {
   for path in \
     "$BIN_DIR/airplay2fm.sh" \
     "$BIN_DIR/airplay-rds.py" \
+    "$BIN_DIR/airplay_announce.sh" \
     "$BIN_DIR/led-airplay-statusd.sh" \
     /etc/default/airplay2fm \
     /etc/tmpfiles.d/airplay2fm.conf \
     /etc/shairport-sync.conf.airplay2fm.bak \
+    /run/airplay_announce.wav \
     "$AIRPLAY_AUDIO_PIPE" \
     "$AIRPLAY_META_PIPE" \
     "$RDSCTL"; do
@@ -282,7 +284,7 @@ if (( DRY_RUN )); then
   log "Would configure shairport-sync: AirPlay name='$AP_NAME', pipe=/run/airplay_audio"
   log "Would build PiFmRds in: $PIFM_DIR"
   log "Would write /etc/default/airplay2fm  FREQ=$FREQ STEP=$STEP FMIN=$FMIN FMAX=$FMAX AP_NAME=$AP_NAME"
-  log "Would deploy scripts to $BIN_DIR: airplay2fm.sh airplay-rds.py led-airplay-statusd.sh"
+  log "Would deploy scripts to $BIN_DIR: airplay2fm.sh airplay-rds.py airplay_announce.sh led-airplay-statusd.sh"
   log "Would register systemd units: shairport-sync airplay2fm airplay-rds led-airplay-statusd"
   detect_pi_board
   show_board_art
@@ -543,12 +545,48 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-# ---- AirPlay metadata -> RDS daemon ----
-log "AirPlay metadata -> RDS (PS/RT) daemon"
+# ---- TTS announcer (speaks new frequency, then resumes the pipeline) ----
+log "TTS announcer for frequency changes"
+cat >"$BIN_DIR/airplay_announce.sh" <<'AANN'
+#!/usr/bin/env bash
+set -euo pipefail
+source /etc/default/airplay2fm
+USER_NAME="${PI_USER:-$(id -un)}"
+USER_HOME="${PI_HOME:-}"
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6 2>/dev/null || true)"
+fi
+[[ -z "$USER_HOME" ]] && USER_HOME="/home/$USER_NAME"
+PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
+[ -x "$PIFM" ] || PIFM="$HOME/PiFmRds/src/pi_fm_rds"
+TARGET_FREQ="${1:-$FREQ}"
+PREV_FREQ="${2:-}"
+TMPWAV="/run/airplay_announce.wav"; mkdir -p /run
+say(){ if command -v pico2wave >/dev/null; then pico2wave -l en-US -w "$TMPWAV" "$1"; else espeak-ng -v en-us -s 160 -w "$TMPWAV" "$1"; fi; }
+fmt(){ awk -v f="$1" 'BEGIN{printf "%.1f", f}'; }
+command -v /usr/local/bin/ledctl.sh >/dev/null 2>&1 && /usr/local/bin/ledctl.sh flash3 || true
+# Stop the stream pipeline so only one pi_fm_rds owns GPIO4/DMA
+systemctl stop airplay2fm.service >/dev/null 2>&1 || true
+# Tell listeners on the old frequency where to go, then confirm on the new one
+if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
+  say "Moving to $(fmt "$TARGET_FREQ") megahertz."
+  sudo "$PIFM" -freq "$PREV_FREQ" -audio "$TMPWAV"
+fi
+say "Broadcasting at $(fmt "$TARGET_FREQ") megahertz."
+sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV"
+sleep 0.5
+systemctl start airplay2fm.service >/dev/null 2>&1 || true
+AANN
+finalize_script "$BIN_DIR/airplay_announce.sh"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay_announce.sh")
+
+# ---- AirPlay metadata -> RDS + volume-key frequency daemon ----
+log "AirPlay metadata -> RDS (PS/RT) + volume-key frequency daemon"
 cat >"$BIN_DIR/airplay-rds.py" <<'PYAP'
 #!/usr/bin/env python3
-"""Read shairport-sync metadata pipe and update PiFmRds RDS PS/RT fields."""
-import base64, logging, os, re, time
+"""Read shairport-sync metadata pipe: update RDS PS/RT and shift the FM
+frequency when the sender's volume keys are pressed while paused."""
+import base64, logging, os, re, subprocess, time
 from xml.etree import ElementTree as ET
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -556,6 +594,54 @@ logger = logging.getLogger(__name__)
 
 META_PIPE = "/run/airplay_metadata"
 RDSCTL    = "/run/rds_ctl"
+CONFIG    = "/etc/default/airplay2fm"
+ANNOUNCE  = "/usr/local/bin/airplay_announce.sh"
+
+def read_config():
+    cfg = {}
+    try:
+        with open(CONFIG) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    cfg[k] = v.strip().strip('"')
+    except OSError as e:
+        logger.warning(f"Config read failed: {e}")
+    return cfg
+
+def write_freq(new):
+    try:
+        with open(CONFIG) as f:
+            lines = f.readlines()
+        with open(CONFIG, "w") as f:
+            for ln in lines:
+                f.write(f"FREQ={new}\n" if ln.startswith("FREQ=") else ln)
+    except OSError as e:
+        logger.warning(f"Config write failed: {e}")
+
+def bump_freq(direction):
+    """Shift FREQ by STEP within [FMIN, FMAX], then announce + restart."""
+    cfg = read_config()
+    try:
+        cur  = float(cfg.get("FREQ", "87.9"))
+        step = float(cfg.get("STEP", "0.2"))
+        fmin = float(cfg.get("FMIN", "87.7"))
+        fmax = float(cfg.get("FMAX", "107.9"))
+    except ValueError as e:
+        logger.warning(f"Bad config value: {e}")
+        return
+    new = round(min(max(cur + (step if direction == "up" else -step), fmin), fmax), 1)
+    if new == cur:
+        return
+    write_freq(new)
+    logger.info(f"Frequency {direction}: {cur} -> {new} MHz")
+    # Blocks for the announcements (~15 s); serializes rapid key presses.
+    if os.access(ANNOUNCE, os.X_OK):
+        try:
+            subprocess.run([ANNOUNCE, str(new), str(cur)], timeout=90, check=False)
+        except Exception as e:
+            logger.warning(f"Announce failed: {e}")
 
 def decode_data(el):
     if el is None:
@@ -651,6 +737,8 @@ def parse_items(pipe_file):
 def main():
     write_rds(ps="AP-PI", rt="AirPlay audio")
     title = artist = album = ""
+    play_state = "idle"   # volume keys only shift frequency while paused
+    last_vol   = None     # baseline; first pvol after a state change sets it
 
     while True:
         try:
@@ -661,10 +749,24 @@ def main():
                             logger.info("Stream started/resumed")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
+                            play_state, last_vol = "active", None
                         elif code in ("pend", "pfls"):
                             logger.info("Stream ended/paused")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
+                            play_state, last_vol = "paused", None
+                        elif code == "pvol":
+                            # "airplay_volume,volume,lowest,highest"; first
+                            # field is -144 (mute) or -30..0 dB attenuation
+                            try:
+                                vol = float(value.split(",")[0])
+                            except (ValueError, IndexError):
+                                continue
+                            prev, last_vol = last_vol, vol
+                            if prev is None or play_state == "active":
+                                continue
+                            if   vol > prev: bump_freq("up")
+                            elif vol < prev: bump_freq("down")
                         elif code == "mden":
                             # metadata-end (ssnc type): all core track fields received
                             if title or artist:
@@ -829,7 +931,9 @@ Audio pipeline:
 
 Notes:
   - FM transmits only while AirPlay audio is playing (carrier off when idle).
-  - FM frequency is fixed at install time. To change:
+  - Change frequency from the sender: pause playback, then press volume
+    up/down (step: ${STEP} MHz, range ${FMIN}-${FMAX}). LED flashes and the
+    new frequency is announced over FM. Or edit the config directly:
       sudo sed -i 's/^FREQ=.*/FREQ=NEW_FREQ/' /etc/default/airplay2fm
       sudo systemctl restart airplay2fm.service
   - A reboot may be required for full ACT LED control.

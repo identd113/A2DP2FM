@@ -50,6 +50,9 @@ decoded and delivered to RDS ("RDS updated: 'Blocks w/ Neal Brennan' /
 ### Outstanding
 - Radio-side confirmation (FM audio audible, RDS text displayed) pending
   antenna wire installation on the test Pi.
+- AirPlay volume-key frequency control (pvol events while paused) is new
+  and needs hardware verification — in particular whether iOS keeps
+  sending volume events to the AirPlay route while playback is paused.
 - BlueALSA capture addressing (`DEV=` parameter) needs verification on a
   physical Pi — see TODO.md "FM Code Review Findings".
 
