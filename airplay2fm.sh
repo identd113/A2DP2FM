@@ -302,7 +302,7 @@ declare -a APT_PACKAGES=(
   git build-essential autoconf automake libtool pkg-config
   libssl-dev libavahi-client-dev libasound2-dev libpopt-dev libconfig-dev
   libsystemd-dev avahi-daemon libnss-mdns
-  avahi-utils sox libttspico-utils espeak-ng python3
+  avahi-utils sox flite python3
 )
 
 SHAIRPORT_FROM_APT=0
@@ -565,7 +565,7 @@ PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
 TARGET_FREQ="${1:-$FREQ}"
 PREV_FREQ="${2:-}"
 TMPWAV="/run/airplay_announce.wav"; mkdir -p /run
-say(){ if command -v pico2wave >/dev/null; then pico2wave -l en-US -w "$TMPWAV" "$1"; else espeak-ng -v en-us -s 160 -w "$TMPWAV" "$1"; fi; }
+say(){ flite -t "$1" -o "$TMPWAV"; }
 fmt(){ awk -v f="$1" 'BEGIN{printf "%.1f", f}'; }
 command -v /usr/local/bin/ledctl.sh >/dev/null 2>&1 && /usr/local/bin/ledctl.sh flash3 || true
 # Stop the stream pipeline so only one pi_fm_rds owns GPIO4/DMA
