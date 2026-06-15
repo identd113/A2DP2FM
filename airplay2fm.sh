@@ -565,11 +565,21 @@ PIFM="$USER_HOME/PiFmRds/src/pi_fm_rds"
 TARGET_FREQ="${1:-$FREQ}"
 PREV_FREQ="${2:-}"
 TMPWAV="/run/airplay_announce.wav"; mkdir -p /run
+AUDIO_PIPE="/run/airplay_audio"
 say(){ flite -t "$1" -o "$TMPWAV"; }
 fmt(){ awk -v f="$1" 'BEGIN{printf "%.1f", f}'; }
 command -v /usr/local/bin/ledctl.sh >/dev/null 2>&1 && /usr/local/bin/ledctl.sh flash3 || true
+
+# Keep the FIFO drained while pi_fm_rds is offline so shairport-sync never
+# loses its writer, never gets SIGPIPE, and the AirPlay session stays alive.
+# Without this, iOS takes ~60 s to reconnect after the announce.
+cat "$AUDIO_PIPE" >/dev/null &
+DRAINER=$!
+trap 'kill "$DRAINER" 2>/dev/null || true' EXIT
+
 # Stop the stream pipeline so only one pi_fm_rds owns GPIO4/DMA
 systemctl stop airplay2fm.service >/dev/null 2>&1 || true
+
 # Tell listeners on the old frequency where to go, then confirm on the new one
 if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
   say "Moving to $(fmt "$TARGET_FREQ") megahertz."
@@ -578,8 +588,12 @@ if [[ -n "$PREV_FREQ" && "$PREV_FREQ" != "$TARGET_FREQ" ]]; then
 fi
 say "Broadcasting at $(fmt "$TARGET_FREQ") megahertz."
 timeout 8 sudo "$PIFM" -freq "$TARGET_FREQ" -audio "$TMPWAV" || true
-sleep 0.5
+
+# Start the pipeline first, wait briefly for its cat to open the FIFO,
+# then kill the drainer — overlap ensures shairport-sync always has a reader.
 systemctl start airplay2fm.service >/dev/null 2>&1 || true
+sleep 0.3
+kill "$DRAINER" 2>/dev/null || true
 AANN
 finalize_script "$BIN_DIR/airplay_announce.sh"
 INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay_announce.sh")
