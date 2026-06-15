@@ -36,8 +36,8 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Zero-config AirPlay discovery** – Advertises itself on the local network via Avahi/Bonjour; appears instantly in iOS Control Center and macOS audio output.
 * **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
-* **Volume-key frequency control** – Press the sender's volume buttons while playback is **paused** to shift the FM frequency. Rapid presses are batched: ~3 s after the last press, the net change applies in one move (3 up-clicks = +0.6 MHz at the default 0.2 step), announced on the old frequency and confirmed on the new one. During playback the volume buttons work normally.
-* **Automatic volume restore** – Tuning clicks necessarily move your device's AirPlay volume; the Pi undoes them over the AirPlay remote-control back-channel (DACP) as soon as playback resumes, so tuning leaves your volume exactly where it was.
+* **Web tuner UI** – A built-in HTTP server on port 8750 serves a mobile-friendly page showing the current frequency, now-playing track, and play state, with Up/Down step buttons and a direct-entry frequency field. Changes persist across restarts.
+* **Volume-key frequency control** *(opt-in, `--vol-tune`)* – Press the sender's volume buttons while playback is **paused** to shift the FM frequency. Rapid presses are batched: ~3 s after the last press, the net change applies in one move (3 up-clicks = +0.6 MHz at the default 0.2 step), announced on the old frequency and confirmed on the new one. Sender volume is restored via the DACP back-channel when playback resumes.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
 ## Hardware requirements
@@ -234,15 +234,16 @@ What the installer does:
 ### AirPlay (`airplay2fm.sh`)
 
 ```bash
-sudo bash airplay2fm.sh [--freq 87.9] [--name "Pi FM Radio"] [--step 0.2] [--min 87.7] [--max 107.9]
+sudo bash airplay2fm.sh [--freq 87.9] [--name "Pi FM Radio"] [--step 0.2] [--min 87.7] [--max 107.9] [--vol-tune]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--freq` | `87.9` | FM frequency (MHz) |
 | `--name` | `Pi FM Radio` | AirPlay device name shown in iOS/macOS |
-| `--step` | `0.2` | Step size (for future use) |
+| `--step` | `0.2` | Step size (MHz) for Up/Down tuning (web UI and vol-key) |
 | `--min` / `--max` | `87.7` / `107.9` | Frequency bounds |
+| `--vol-tune` | off | Enable volume-rocker frequency control (disabled by default) |
 | `--dry-run` | — | Preview what would be installed |
 | `--verbose` | — | Extra logging |
 
@@ -274,8 +275,8 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. To change frequency: **pause, then press volume up/down right away** (iOS only routes the buttons to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with the LED flash, an announcement on the old frequency, and confirmation on the new one. When you resume playback, the Pi automatically undoes the volume movement your clicks caused, so your volume comes back where it was. (Tips: if volume is at maximum, "up" presses send no event — nudge down once first. During playback, volume buttons control volume as normal.)
-7. You can also change frequency by editing `/etc/default/airplay2fm` and restarting services (see Configuration below).
+6. **To change frequency:** open `http://<pi-hostname>:8750/` in any browser on the same network. The page shows the current frequency, now-playing info, and play state. Tap **Down** or **Up** to step by 0.2 MHz, or type a frequency directly and tap **Set**. Changes take effect immediately (the pipeline restarts with the new frequency) and persist through reboots.
+7. *(Optional, `--vol-tune` only)* To change frequency with the volume rocker: **pause, then press volume up/down right away** (iOS only routes the rocker to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with an LED flash and TTS announcement. Sender volume is restored automatically on resume.
 
 ### LED behavior
 

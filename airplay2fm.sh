@@ -3,11 +3,12 @@
 # Headless AirPlay (RAOP) -> PiFmRds (FM on GPIO4) + RDS metadata + LED status
 # Uses shairport-sync as the AirPlay 1 receiver with pipe audio output
 # Tags: raspberry-pi, airplay, raop, fm-transmitter, rds, pi-fm-rds, shairport-sync, systemd, tts
-# Usage: sudo bash airplay2fm.sh [--freq 87.9] [--name "Pi FM Radio"] [--step 0.2] [--min 87.7] [--max 107.9]
+# Usage: sudo bash airplay2fm.sh [--freq 87.9] [--name "Pi FM Radio"] [--step 0.2] [--min 87.7] [--max 107.9] [--vol-tune]
 
 set -euo pipefail
 
 FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"; AP_NAME="Pi FM Radio"
+VOL_TUNE=0
 UNINSTALL=0; DRY_RUN=0; VERBOSE=0
 
 while [[ $# -gt 0 ]]; do
@@ -20,7 +21,8 @@ while [[ $# -gt 0 ]]; do
     --name)    AP_NAME="$2"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
     --verbose) VERBOSE=1; shift;;
-    *) echo "Usage: sudo bash $0 [--freq 87.9] [--name 'Pi FM Radio'] [--step 0.2] [--min 87.7] [--max 107.9] [--dry-run] [--verbose] [--uninstall]"; exit 1;;
+    --vol-tune) VOL_TUNE=1; shift;;
+    *) echo "Usage: sudo bash $0 [--freq 87.9] [--name 'Pi FM Radio'] [--step 0.2] [--min 87.7] [--max 107.9] [--vol-tune] [--dry-run] [--verbose] [--uninstall]"; exit 1;;
   esac
 done
 
@@ -283,7 +285,7 @@ if (( DRY_RUN )); then
   log "Would load snd-aloop ALSA loopback kernel module (fallback if pipe backend unavailable)"
   log "Would configure shairport-sync: AirPlay name='$AP_NAME', pipe=/run/airplay_audio"
   log "Would build PiFmRds in: $PIFM_DIR"
-  log "Would write /etc/default/airplay2fm  FREQ=$FREQ STEP=$STEP FMIN=$FMIN FMAX=$FMAX AP_NAME=$AP_NAME"
+  log "Would write /etc/default/airplay2fm  FREQ=$FREQ STEP=$STEP FMIN=$FMIN FMAX=$FMAX AP_NAME=$AP_NAME VOL_TUNE=$VOL_TUNE"
   log "Would deploy scripts to $BIN_DIR: airplay2fm.sh airplay-rds.py airplay_announce.sh led-airplay-statusd.sh"
   log "Would register systemd units: shairport-sync airplay2fm airplay-rds led-airplay-statusd"
   detect_pi_board
@@ -476,6 +478,7 @@ STEP=$STEP
 FMIN=$FMIN
 FMAX=$FMAX
 AP_NAME="${AP_NAME}"
+VOL_TUNE=$VOL_TUNE
 PI_USER="${PI_USER}"
 PI_HOME="${PI_HOME}"
 EOF
@@ -585,9 +588,9 @@ INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay_announce.sh")
 log "AirPlay metadata -> RDS (PS/RT) + volume-key frequency daemon"
 cat >"$BIN_DIR/airplay-rds.py" <<'PYAP'
 #!/usr/bin/env python3
-"""Read shairport-sync metadata pipe: update RDS PS/RT and shift the FM
-frequency when the sender's volume keys are pressed while paused."""
-import base64, logging, os, re, subprocess, threading, time, urllib.request
+"""AirPlay metadata -> RDS PS/RT; HTTP tuner UI; optional volume-key frequency control."""
+import base64, json, logging, os, re, subprocess, threading, time, urllib.parse, urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from xml.etree import ElementTree as ET
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -621,26 +624,221 @@ def write_freq(new):
     except OSError as e:
         logger.warning(f"Config write failed: {e}")
 
-# Volume clicks are batched: rapid presses accumulate and the net change
-# is applied after DEBOUNCE_S of quiet -- 3 up-clicks = +3*STEP, announced
-# once. The worker thread keeps announcements off the metadata-reader loop.
+# ---------------------------------------------------------------------------
+# Shared UI state — updated by the metadata loop, read by the HTTP handler
+# ---------------------------------------------------------------------------
+_ui_lock  = threading.Lock()
+_ui_state = {"play_state": "idle", "title": "", "artist": "", "album": ""}
+
+def _set_ui(**kw):
+    with _ui_lock:
+        _ui_state.update(kw)
+
+def _get_status():
+    cfg = read_config()
+    with _ui_lock:
+        st = dict(_ui_state)
+    return {
+        "freq":       cfg.get("FREQ",    "87.9"),
+        "step":       cfg.get("STEP",    "0.2"),
+        "fmin":       cfg.get("FMIN",    "87.7"),
+        "fmax":       cfg.get("FMAX",    "107.9"),
+        "ap_name":    cfg.get("AP_NAME", "Pi FM Radio"),
+        "play_state": st["play_state"],
+        "title":      st["title"],
+        "artist":     st["artist"],
+        "album":      st["album"],
+    }
+
+# ---------------------------------------------------------------------------
+# HTTP tuner server
+# ---------------------------------------------------------------------------
+_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pi FM Tuner</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:420px;margin:0 auto;padding:1rem}
+h1{color:#f80;margin-bottom:.5rem;font-size:1.3rem;font-weight:600}
+.freq{font-size:3.5rem;font-weight:700;text-align:center;color:#f80;margin:.4rem 0;letter-spacing:.05em}
+.card{background:#1c1c1c;border-radius:10px;padding:.75rem 1rem;margin:.5rem 0;min-height:3.5rem}
+.badge{display:inline-block;font-size:.7rem;padding:.15rem .5rem;border-radius:999px;background:#222;color:#666;margin-bottom:.35rem}
+.badge.active{background:#1a7a1a;color:#4f4}
+.badge.paused{background:#7a5a00;color:#fc0}
+.track-title{font-weight:600;font-size:1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{color:#888;font-size:.85rem;margin-top:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row{display:flex;gap:.5rem;margin:.5rem 0}
+button{flex:1;padding:.85rem;font-size:1.1rem;background:#1c1c1c;color:#eee;border:1px solid #2a2a2a;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:active{background:#2a2a2a}
+.setrow{display:flex;gap:.5rem;margin:.5rem 0}
+.setrow input{flex:1;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:10px;color:#eee;font-size:1rem;padding:.6rem .8rem}
+.setrow button{flex:0 0 auto;padding:.6rem 1.2rem;font-size:1rem}
+.meta{text-align:center;color:#444;font-size:.72rem;margin-top:.6rem}
+</style>
+</head>
+<body>
+<h1 id="apn">Pi FM Tuner</h1>
+<div class="freq" id="freq">--.-</div>
+<div class="card">
+  <span class="badge" id="badge">Idle</span>
+  <div class="track-title" id="title">&mdash;</div>
+  <div class="sub" id="sub"></div>
+</div>
+<div class="row">
+  <button onclick="tune('down')">&#9664; Down</button>
+  <button onclick="tune('up')">Up &#9654;</button>
+</div>
+<div class="setrow">
+  <input type="number" id="nf" step="0.1" placeholder="e.g. 98.1">
+  <button onclick="setf()">Set</button>
+</div>
+<div class="meta" id="meta"></div>
+<script>
+var D=document;
+function upd(){
+  fetch('/api/status').then(function(r){return r.json()}).then(function(d){
+    D.getElementById('freq').textContent=d.freq+' MHz';
+    D.getElementById('apn').textContent=d.ap_name||'Pi FM Tuner';
+    D.getElementById('title').textContent=d.title||(d.play_state==='active'?'Unknown track':'');
+    var sub=[d.artist,d.album].filter(Boolean).join(' · ');
+    D.getElementById('sub').textContent=sub;
+    var b=D.getElementById('badge');
+    var labels={'active':'▶ Playing','paused':'⏸ Paused','idle':'○ Idle'};
+    b.textContent=labels[d.play_state]||'○ Idle';
+    b.className='badge '+(d.play_state==='active'?'active':d.play_state==='paused'?'paused':'');
+    D.getElementById('meta').textContent='Step: '+d.step+' MHz  ·  Range: '+d.fmin+'–'+d.fmax+' MHz';
+    var nf=D.getElementById('nf'); nf.min=d.fmin; nf.max=d.fmax; nf.step=d.step;
+  }).catch(function(){});
+}
+function tune(dir){
+  fetch('/api/'+dir,{method:'POST'}).then(function(){setTimeout(upd,400)});
+}
+function setf(){
+  var v=D.getElementById('nf').value; if(!v) return;
+  fetch('/api/freq',{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'freq='+encodeURIComponent(v)
+  }).then(function(){setTimeout(upd,400)});
+}
+upd(); setInterval(upd,5000);
+</script>
+</body>
+</html>"""
+
+def _do_tune(new_freq, cur_freq):
+    write_freq(new_freq)
+    logger.info(f"Tune {cur_freq} -> {new_freq} MHz")
+    if os.access(ANNOUNCE, os.X_OK):
+        threading.Thread(
+            target=lambda: subprocess.run(
+                [ANNOUNCE, str(new_freq), str(cur_freq)], timeout=90, check=False),
+            daemon=True).start()
+
+def _tune_steps(steps):
+    cfg = read_config()
+    try:
+        cur  = float(cfg.get("FREQ", "87.9"))
+        step = float(cfg.get("STEP", "0.2"))
+        fmin = float(cfg.get("FMIN", "87.7"))
+        fmax = float(cfg.get("FMAX", "107.9"))
+    except ValueError:
+        return
+    new = round(min(max(cur + steps * step, fmin), fmax), 1)
+    if new != cur:
+        _do_tune(new, cur)
+
+def _tune_absolute(freq_s):
+    cfg = read_config()
+    try:
+        cur  = float(cfg.get("FREQ", "87.9"))
+        fmin = float(cfg.get("FMIN", "87.7"))
+        fmax = float(cfg.get("FMAX", "107.9"))
+        new  = round(min(max(float(freq_s), fmin), fmax), 1)
+    except ValueError:
+        return
+    if new != cur:
+        _do_tune(new, cur)
+
+class _TunerHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args): pass  # silence per-request log
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            body = _HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/api/status":
+            body = json.dumps(_get_status()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        try:
+            if self.path == "/api/up":
+                _tune_steps(+1)
+            elif self.path == "/api/down":
+                _tune_steps(-1)
+            elif self.path == "/api/freq":
+                length = int(self.headers.get("Content-Length", 0))
+                raw    = self.rfile.read(length).decode(errors="replace")
+                params = urllib.parse.parse_qs(raw)
+                freq_s = params.get("freq", [""])[0]
+                if freq_s:
+                    _tune_absolute(freq_s)
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(204)
+            self.end_headers()
+        except Exception as e:
+            logger.warning(f"HTTP handler error: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+def _http_server_thread():
+    cfg  = read_config()
+    try:
+        port = int(cfg.get("HTTP_PORT", "8750"))
+    except ValueError:
+        port = 8750
+    try:
+        srv = HTTPServer(("", port), _TunerHandler)
+        logger.info(f"Tuner UI: http://0.0.0.0:{port}/")
+        srv.serve_forever()
+    except Exception as e:
+        logger.warning(f"HTTP server failed on port {port}: {e}")
+
+# ---------------------------------------------------------------------------
+# Volume-key frequency control (disabled by default; enabled with VOL_TUNE=1)
+# ---------------------------------------------------------------------------
 DEBOUNCE_S = 3.0
 _pending_lock  = threading.Lock()
 _pending_steps = 0
 _last_click    = 0.0
 
-# DACP back-channel: AirPlay senders run a remote-control service we can
-# command. After tuning clicks change the frequency, we snap the sender's
-# volume bar back to where it was before the first click (best effort).
-_dacp_id       = None   # ssnc/daid from the metadata stream
-_active_remote = None   # ssnc/acre token, required header for DACP calls
-_dacp_addr     = None   # cached (host, port) of the sender's control service
-_vol_before    = None   # sender volume before the first click of a batch
-_suppress_until = 0.0   # ignore pvol echoes of our own restore command
-_restore_target = None  # sender volume (dB) to restore after tuning
-_restore_at    = 0.0    # when to send the undo (set when playback resumes;
-                        # iOS only applies volume commands while playing)
-_current_vol   = None   # latest pvol value seen (updated on every event)
+# DACP back-channel globals (used only when VOL_TUNE=1)
+_dacp_id        = None
+_active_remote  = None
+_dacp_addr      = None
+_vol_before     = None
+_suppress_until = 0.0
+_restore_target = None
+_restore_at     = 0.0
+_current_vol    = None
 
 def dacp_discover():
     """Resolve the sender's DACP endpoint via mDNS (iTunes_Ctrl_<DACP-ID>)."""
@@ -681,7 +879,6 @@ def defer_restore(steps, vol_before):
     logger.info(f"Volume restore deferred until playback resumes (target {target})")
 
 def maybe_restore():
-    """Run from the worker: send the undo once playback has resumed."""
     global _restore_target
     with _pending_lock:
         if _restore_target is None or _restore_at == 0.0 or time.time() < _restore_at:
@@ -690,9 +887,8 @@ def maybe_restore():
     restore_sender_volume_to(target)
 
 def restore_sender_volume_to(target):
-    """Closed-loop restore: nudge the sender's volume one click at a time
-    toward the target, watching the pvol echoes to verify each step
-    actually applied (iOS drops commands sent too early after resume).
+    """Nudge the sender's volume back one click at a time, watching pvol
+    echoes to confirm each step applied before sending the next.
     (setproperty with a dB value returns HTTP 200 but iOS ignores it;
     discrete volumeup/volumedown are the only commands it applies.)"""
     global _suppress_until, _dacp_addr
@@ -728,15 +924,13 @@ def queue_click(direction, prev_vol):
     global _pending_steps, _last_click, _vol_before
     with _pending_lock:
         if _pending_steps == 0:
-            _vol_before = prev_vol  # sender volume before this batch began
+            _vol_before = prev_vol
         _pending_steps += 1 if direction == "up" else -1
         _last_click = time.time()
         pending = _pending_steps
     logger.info(f"Volume click {direction} queued (net {pending:+d})")
 
-
 def apply_pending():
-    """Apply the accumulated clicks once the quiet window has elapsed."""
     global _pending_steps, _vol_before
     with _pending_lock:
         if _pending_steps == 0 or (time.time() - _last_click) < DEBOUNCE_S:
@@ -754,7 +948,6 @@ def apply_pending():
         return
     new = round(min(max(cur + steps * step, fmin), fmax), 1)
     if new == cur:
-        # Clamped to no-op: the clicks still moved the sender volume
         defer_restore(steps, restore_vol)
         return
     write_freq(new)
@@ -771,6 +964,10 @@ def bump_worker():
         time.sleep(0.25)
         apply_pending()
         maybe_restore()
+
+# ---------------------------------------------------------------------------
+# Metadata helpers
+# ---------------------------------------------------------------------------
 
 def decode_data(el):
     if el is None:
@@ -810,11 +1007,10 @@ def safe_rt(title: str, artist: str, album: str) -> str:
 def write_rds(ps=None, rt=None):
     """Write PS/RT to the RDS FIFO without blocking.
 
-    pi_fm_rds (the FIFO reader) only runs while an AirPlay stream is
-    active. A plain open() blocks until a reader appears — which would
-    wedge this daemon at startup and delay metadata-pipe reading until
-    the first stream. Retry a non-blocking open briefly, then drop the
-    update if no transmitter is listening.
+    pi_fm_rds only runs while an AirPlay stream is active. A plain open()
+    blocks until a reader appears — wedging this daemon until the first
+    stream. Retry a non-blocking open briefly, then drop the update if no
+    transmitter is listening.
     """
     data = ""
     if ps is not None:
@@ -841,7 +1037,7 @@ def write_rds(ps=None, rt=None):
         os.close(fd)
 
 def parse_items(pipe_file):
-    """Yield parsed (itype, code, value) tuples from the shairport-sync metadata pipe."""
+    """Yield (itype, code, value) tuples from the shairport-sync metadata pipe."""
     buf = ""
     for raw_line in pipe_file:
         buf += raw_line
@@ -849,7 +1045,6 @@ def parse_items(pipe_file):
             end   = buf.index("</item>") + len("</item>")
             chunk = buf[:end].strip()
             buf   = buf[end:]
-            # Find the start of the item element
             start = chunk.find("<item>")
             if start < 0:
                 continue
@@ -865,11 +1060,20 @@ def parse_items(pipe_file):
 
 def main():
     global _dacp_id, _dacp_addr, _active_remote, _restore_target, _restore_at, _current_vol
+    cfg      = read_config()
+    vol_tune = cfg.get("VOL_TUNE", "0").strip() == "1"
+    if vol_tune:
+        logger.info("Volume-key frequency control enabled (VOL_TUNE=1)")
+    else:
+        logger.info("Volume-key tuning disabled; use the web UI to change frequency")
+
     write_rds(ps="AP-PI", rt="AirPlay audio")
-    threading.Thread(target=bump_worker, daemon=True).start()
+    threading.Thread(target=bump_worker,        daemon=True).start()
+    threading.Thread(target=_http_server_thread, daemon=True).start()
+
     title = artist = album = ""
-    play_state = "idle"   # volume keys only shift frequency while paused
-    last_vol   = None     # baseline; first pvol after a state change sets it
+    play_state = "idle"
+    last_vol   = None
 
     while True:
         try:
@@ -881,25 +1085,24 @@ def main():
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
                             play_state = "active"
-                            # pvol is an absolute dB value: keep the baseline
-                            # across pause/resume so no click gets eaten;
-                            # reset only at the start of a new session.
+                            _set_ui(play_state="active", title="", artist="", album="")
                             if code == "pbeg":
                                 last_vol = None
                                 with _pending_lock:
-                                    _restore_target = None  # stale undo from a previous session
-                            # playback is live again: send any deferred undo
-                            # shortly (iOS applies volume only while playing)
+                                    _restore_target = None
                             _restore_at = time.time() + 1.5
                         elif code in ("pend", "pfls"):
                             logger.info("Stream ended/paused")
                             write_rds(ps="AP-PI", rt="AirPlay audio")
                             title = artist = album = ""
                             play_state = "paused"
-                            _restore_at = 0.0  # hold the undo while paused
+                            _set_ui(
+                                play_state="idle" if code == "pend" else "paused",
+                                title="", artist="", album="")
+                            _restore_at = 0.0
                         elif code == "pvol":
-                            # "airplay_volume,volume,lowest,highest"; first
-                            # field is -144 (mute) or -30..0 dB attenuation
+                            if not vol_tune:
+                                continue
                             try:
                                 vol = float(value.split(",")[0])
                             except (ValueError, IndexError):
@@ -907,12 +1110,10 @@ def main():
                             logger.debug(f"pvol {vol} (state={play_state})")
                             _current_vol = vol
                             prev, last_vol = last_vol, vol
-                            # Tuning only while paused: during playback the
-                            # rocker is ordinary volume control.
                             if prev is None or vol == prev or play_state == "active":
                                 continue
                             if time.time() < _suppress_until:
-                                continue  # echo of our own volume restore
+                                continue
                             queue_click("up" if vol > prev else "down", prev)
                         elif code == "daid":
                             if value and value != _dacp_id:
@@ -921,7 +1122,6 @@ def main():
                             if value:
                                 _active_remote = value
                         elif code == "mden":
-                            # metadata-end (ssnc type): all core track fields received
                             if title or artist:
                                 write_rds(
                                     ps=safe_ps(artist or title),
@@ -930,11 +1130,11 @@ def main():
                                 logger.info(f"RDS updated: '{artist}' / '{title}'")
                     elif itype == "core":
                         if   code == "minm":
-                            title  = value
+                            title  = value; _set_ui(title=value)
                         elif code == "asar":
-                            artist = value
+                            artist = value; _set_ui(artist=value)
                         elif code == "asal":
-                            album  = value
+                            album  = value; _set_ui(album=value)
         except OSError as e:
             logger.warning(f"Metadata pipe error ({e}); retrying in 3s")
             time.sleep(3)
@@ -1067,6 +1267,8 @@ INSTALL COMPLETE (AirPlay -> FM)
 • AirPlay name:    ${AP_NAME}
   (Appears in iOS Control Center / macOS audio output selector)
 • FM frequency:    ${FREQ} MHz   step: ${STEP} MHz   range: ${FMIN} - ${FMAX} MHz
+• Tuner web UI:    http://<pi-hostname>:8750/
+• Vol-key tuning:  $([ "$VOL_TUNE" = "1" ] && echo "enabled (--vol-tune)" || echo "disabled (pass --vol-tune to enable)")
 • Antenna:         Connect a 10-20 cm wire to GPIO4 (pin 7) — see the board
                    diagram below.
 
@@ -1074,6 +1276,12 @@ How to use:
   1. Ensure your iPhone/Mac is on the same Wi-Fi network as the Pi.
   2. Open Control Center -> AirPlay icon -> select "${AP_NAME}".
   3. Play audio; tune a radio to ${FREQ} MHz.
+
+Tuner web UI (preferred):
+  Open http://<pi-hostname>:8750/ in any browser on the same network.
+  Shows current frequency, now playing, and play state.
+  Use the Up/Down buttons (step: ${STEP} MHz) or type a frequency and tap Set.
+  Frequency changes persist through restarts.
 
 RDS:    PS shows artist (8 chars), RT shows "Artist - Title * Album".
 LED:    Slow blink = AirPlay ready (waiting). Solid = streaming.
@@ -1084,11 +1292,12 @@ Audio pipeline:
 
 Notes:
   - FM transmits only while AirPlay audio is playing (carrier off when idle).
-  - Change frequency from the sender: pause playback, then press volume
-    up/down (step: ${STEP} MHz, range ${FMIN}-${FMAX}). LED flashes and the
-    new frequency is announced over FM. Or edit the config directly:
-      sudo sed -i 's/^FREQ=.*/FREQ=NEW_FREQ/' /etc/default/airplay2fm
-      sudo systemctl restart airplay2fm.service
+  - Volume-key tuning (--vol-tune): pause playback, press volume up/down to
+    shift frequency by ${STEP} MHz. Sender volume is restored on resume.
+  - Tuner API: POST http://<pi>:8750/api/up|down|freq (body: freq=XX.X)
+               GET  http://<pi>:8750/api/status  returns JSON
+  - To override the HTTP port: add HTTP_PORT=XXXX to /etc/default/airplay2fm
+    and restart airplay-rds.service.
   - A reboot may be required for full ACT LED control.
   - If a2dp2fm (Bluetooth) is also installed, do NOT run both simultaneously
     (both use GPIO4 for the FM transmitter).
