@@ -28,7 +28,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Headless Bluetooth pairing** – Keeps the adapter powered, discoverable, and pairable after every boot; no screen or keyboard required.
 * **A2DP audio pipeline** – Captures audio via BlueALSA and feeds it into PiFmRds.
 * **Volume-key frequency control** – Monitors Bluetooth Absolute Volume so the phone's volume buttons shift the FM frequency while playback is paused.
-* **TTS station announcements** – After each channel change, announces "moving to X" on the old frequency (so listeners know where to retune), then confirms on the new one, using `pico2wave` or `espeak-ng`.
+* **TTS station announcements** – After each frequency change, announces "moving to X" on the old frequency (so listeners know where to retune), then confirms on the new one, using `flite`.
 * **AVRCP metadata to RDS** – Pushes track info from the connected phone into RDS PS/RT fields.
 
 ### AirPlay (`airplay2fm.sh`)
