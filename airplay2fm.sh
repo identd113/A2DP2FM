@@ -659,72 +659,79 @@ _HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pi FM Tuner</title>
+<meta name="theme-color" content="#111111">
+<title>Pi FM</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:420px;margin:0 auto;padding:1rem}
-h1{color:#f80;margin-bottom:.5rem;font-size:1.3rem;font-weight:600}
-.freq{font-size:3.5rem;font-weight:700;text-align:center;color:#f80;margin:.4rem 0;letter-spacing:.05em}
-.card{background:#1c1c1c;border-radius:10px;padding:.75rem 1rem;margin:.5rem 0;min-height:3.5rem}
-.badge{display:inline-block;font-size:.7rem;padding:.15rem .5rem;border-radius:999px;background:#222;color:#666;margin-bottom:.35rem}
-.badge.active{background:#1a7a1a;color:#4f4}
-.badge.paused{background:#7a5a00;color:#fc0}
-.track-title{font-weight:600;font-size:1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sub{color:#888;font-size:.85rem;margin-top:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row{display:flex;gap:.5rem;margin:.5rem 0}
-button{flex:1;padding:.85rem;font-size:1.1rem;background:#1c1c1c;color:#eee;border:1px solid #2a2a2a;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:400px;margin:0 auto;padding:1.25rem;min-height:100dvh}
+h1{font-size:.8rem;font-weight:600;color:#555;letter-spacing:.1em;text-transform:uppercase;margin-bottom:1.25rem}
+.freq{font-size:5rem;font-weight:700;text-align:center;color:#f80;line-height:1;letter-spacing:-.02em}
+.unit{text-align:center;color:#555;font-size:.9rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin:.25rem 0 1rem}
+.card{background:#1c1c1c;border-radius:12px;padding:.875rem 1rem;margin-bottom:.75rem;min-height:4rem}
+.badge{display:inline-flex;align-items:center;gap:.35rem;font-size:.65rem;font-weight:700;padding:.2rem .55rem;border-radius:999px;background:#222;color:#555;margin-bottom:.5rem;letter-spacing:.06em;text-transform:uppercase}
+.dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.badge.active{background:#0b3d0b;color:#3d3}
+.badge.paused{background:#3d2c00;color:#b80}
+.track-title{font-size:1rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{color:#555;font-size:.85rem;margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem}
+button{padding:.9rem;font-size:1rem;font-weight:600;background:#1c1c1c;color:#eee;border:1px solid #242424;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 button:active{background:#2a2a2a}
-.setrow{display:flex;gap:.5rem;margin:.5rem 0}
-.setrow input{flex:1;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:10px;color:#eee;font-size:1rem;padding:.6rem .8rem}
-.setrow button{flex:0 0 auto;padding:.6rem 1.2rem;font-size:1rem}
-.meta{text-align:center;color:#444;font-size:.72rem;margin-top:.6rem}
+.setrow{display:flex;gap:.5rem}
+.setrow input{flex:1;background:#1c1c1c;border:1px solid #242424;border-radius:12px;color:#eee;font-size:1rem;padding:.7rem .9rem;-moz-appearance:textfield}
+.setrow input::-webkit-outer-spin-button,.setrow input::-webkit-inner-spin-button{-webkit-appearance:none}
+.setrow button{flex:0 0 auto;padding:.7rem 1.1rem}
+.meta{text-align:center;color:#333;font-size:.7rem;margin-top:.9rem}
 </style>
 </head>
 <body>
-<h1 id="apn">Pi FM Tuner</h1>
-<div class="freq" id="freq">--.-</div>
+<h1 id="apn">Pi FM</h1>
+<div class="freq" id="freq">—</div>
+<div class="unit">MHz</div>
 <div class="card">
-  <span class="badge" id="badge">Idle</span>
-  <div class="track-title" id="title">&mdash;</div>
+  <div class="badge" id="badge"><span class="dot"></span><span id="st">Idle</span></div>
+  <div class="track-title" id="title"></div>
   <div class="sub" id="sub"></div>
 </div>
-<div class="row">
-  <button onclick="tune('down')">&#9664; Down</button>
-  <button onclick="tune('up')">Up &#9654;</button>
+<div class="btns">
+  <button onclick="tune(-1)">&#9664; Down</button>
+  <button onclick="tune(1)">Up &#9654;</button>
 </div>
 <div class="setrow">
-  <input type="number" id="nf" step="0.1" placeholder="e.g. 98.1">
+  <input type="number" id="nf" step="0.1" placeholder="MHz">
   <button onclick="setf()">Set</button>
 </div>
 <div class="meta" id="meta"></div>
 <script>
-var D=document;
-function upd(){
-  fetch('/api/status').then(function(r){return r.json()}).then(function(d){
-    D.getElementById('freq').textContent=d.freq+' MHz';
-    D.getElementById('apn').textContent=d.ap_name||'Pi FM Tuner';
-    D.getElementById('title').textContent=d.title||(d.play_state==='active'?'Unknown track':'');
-    var sub=[d.artist,d.album].filter(Boolean).join(' · ');
-    D.getElementById('sub').textContent=sub;
-    var b=D.getElementById('badge');
-    var labels={'active':'▶ Playing','paused':'⏸ Paused','idle':'○ Idle'};
-    b.textContent=labels[d.play_state]||'○ Idle';
-    b.className='badge '+(d.play_state==='active'?'active':d.play_state==='paused'?'paused':'');
-    D.getElementById('meta').textContent='Step: '+d.step+' MHz  ·  Range: '+d.fmin+'–'+d.fmax+' MHz';
-    var nf=D.getElementById('nf'); nf.min=d.fmin; nf.max=d.fmax; nf.step=d.step;
-  }).catch(function(){});
+var D=document,S={freq:'87.9',step:'0.2',fmin:'87.7',fmax:'107.9',play_state:'idle',title:'',artist:'',album:'',ap_name:'Pi FM'};
+function render(d){
+  S=d;
+  D.getElementById('freq').textContent=d.freq;
+  D.getElementById('apn').textContent=d.ap_name||'Pi FM';
+  D.getElementById('title').textContent=d.title||'';
+  D.getElementById('sub').textContent=[d.artist,d.album].filter(Boolean).join(' · ');
+  var b=D.getElementById('badge');
+  D.getElementById('st').textContent={active:'Playing',paused:'Paused',idle:'Idle'}[d.play_state]||'Idle';
+  b.className='badge'+(d.play_state==='active'?' active':d.play_state==='paused'?' paused':'');
+  var nf=D.getElementById('nf'); nf.min=d.fmin; nf.max=d.fmax; nf.step=d.step;
+  D.getElementById('meta').textContent='Step '+d.step+' MHz  ·  '+d.fmin+'–'+d.fmax;
 }
+function poll(){fetch('/api/status').then(function(r){return r.json()}).then(render).catch(function(){});}
 function tune(dir){
-  fetch('/api/'+dir,{method:'POST'}).then(function(){setTimeout(upd,400)});
+  var cur=parseFloat(S.freq),step=parseFloat(S.step),mn=parseFloat(S.fmin),mx=parseFloat(S.fmax);
+  var nv=+(Math.min(Math.max(cur+dir*step,mn),mx).toFixed(1));
+  D.getElementById('freq').textContent=nv;
+  S.freq=''+nv;
+  fetch('/api/'+(dir>0?'up':'down'),{method:'POST'}).then(function(){setTimeout(poll,250)});
 }
 function setf(){
-  var v=D.getElementById('nf').value; if(!v) return;
-  fetch('/api/freq',{method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'freq='+encodeURIComponent(v)
-  }).then(function(){setTimeout(upd,400)});
+  var v=parseFloat(D.getElementById('nf').value); if(isNaN(v)) return;
+  var nv=+(Math.min(Math.max(v,parseFloat(S.fmin)),parseFloat(S.fmax)).toFixed(1));
+  D.getElementById('freq').textContent=nv;
+  fetch('/api/freq',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'freq='+encodeURIComponent(nv)}).then(function(){setTimeout(poll,250)});
 }
-upd(); setInterval(upd,5000);
+poll(); setInterval(poll,5000);
 </script>
 </body>
 </html>"""
@@ -772,6 +779,7 @@ class _TunerHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/api/status":
@@ -779,6 +787,7 @@ class _TunerHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
         else:
