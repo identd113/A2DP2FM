@@ -281,7 +281,7 @@ check_fm_hardware_support
 
 if (( DRY_RUN )); then
   log "DRY RUN: no changes will be made"
-  log "Would install packages: shairport-sync avahi-daemon alsa-utils TTS build tools"
+  log "Would install packages: shairport-sync avahi-daemon sox TTS build tools"
   log "Would load snd-aloop ALSA loopback kernel module (fallback if pipe backend unavailable)"
   log "Would configure shairport-sync: AirPlay name='$AP_NAME', pipe=/run/airplay_audio"
   log "Would build PiFmRds in: $PIFM_DIR"
@@ -301,8 +301,8 @@ apt-get update -y
 declare -a APT_PACKAGES=(
   git build-essential autoconf automake libtool pkg-config
   libssl-dev libavahi-client-dev libasound2-dev libpopt-dev libconfig-dev
-  libdaemon-dev libsystemd-dev avahi-daemon libnss-mdns
-  avahi-utils alsa-utils sox jq libttspico-utils espeak-ng gawk python3
+  libsystemd-dev avahi-daemon libnss-mdns
+  avahi-utils sox libttspico-utils espeak-ng python3
 )
 
 SHAIRPORT_FROM_APT=0
