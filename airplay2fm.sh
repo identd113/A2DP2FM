@@ -711,8 +711,12 @@ button:active{background:#2a2a2a}
   <button onclick="tune(-1)">&#9664; Down</button>
   <button onclick="tune(1)">Up &#9654;</button>
 </div>
+<div class="btns">
+  <button onclick="jumpTo(87.9)">&#9660; 87.9</button>
+  <button onclick="jumpTo(107.9)">107.9 &#9650;</button>
+</div>
 <div class="setrow">
-  <input type="number" id="nf" step="0.1" placeholder="MHz">
+  <input type="number" id="nf" step="0.1" min="87.1" placeholder="MHz">
   <button onclick="setf()">Set</button>
 </div>
 <div class="meta" id="meta"></div>
@@ -738,9 +742,14 @@ function tune(dir){
   S.freq=''+nv;
   fetch('/api/'+(dir>0?'up':'down'),{method:'POST'}).then(function(){setTimeout(poll,250)});
 }
+function jumpTo(f){
+  D.getElementById('freq').textContent=f;
+  fetch('/api/freq',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'freq='+encodeURIComponent(f)}).then(function(){setTimeout(poll,250)});
+}
 function setf(){
   var v=parseFloat(D.getElementById('nf').value); if(isNaN(v)) return;
-  var nv=+(Math.min(Math.max(v,parseFloat(S.fmin)),parseFloat(S.fmax)).toFixed(1));
+  var nv=+(Math.min(Math.max(v,87.1),parseFloat(S.fmax)).toFixed(1));
   D.getElementById('freq').textContent=nv;
   fetch('/api/freq',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:'freq='+encodeURIComponent(nv)}).then(function(){setTimeout(poll,250)});
@@ -776,9 +785,8 @@ def _tune_absolute(freq_s):
     cfg = read_config()
     try:
         cur  = float(cfg.get("FREQ", "87.9"))
-        fmin = float(cfg.get("FMIN", "87.7"))
         fmax = float(cfg.get("FMAX", "107.9"))
-        new  = round(min(max(float(freq_s), fmin), fmax), 1)
+        new  = round(min(max(float(freq_s), 87.1), fmax), 1)
     except ValueError:
         return
     if new != cur:
