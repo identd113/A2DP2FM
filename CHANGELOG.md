@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Hardware verified
+- **Antenna + ground plane on real Pi 3** — pin 7 (GPIO4) antenna wire
+  and pin 9 (GND) ground plane wire physically installed and confirmed.
+
 ### Added
 - **Ground plane docs and side-view antenna diagram** — installer board art now marks
   pin 6 (GND, the nearest GND to GPIO4) as the recommended ground plane connection on
