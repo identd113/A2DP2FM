@@ -64,7 +64,7 @@ The standard two-column layout, with pin numbers in the centre:
         │                                │
    3V3  (1)  (2)  5V
  GPIO2  (3)  (4)  5V
- GPIO3  (5)  (6)  GND
+ GPIO3  (5)  (6)  GND        ← (6) GROUND PLANE — optional wire here
  GPIO4  (7)  (8)  GPIO14     ← (7) FM ANTENNA — attach wire here
    GND  (9) (10)  GPIO15
 GPIO17 (11) (12)  GPIO18
@@ -92,14 +92,30 @@ Pin 1 (3V3) is the corner nearest the SD card slot on most models. On Pi Zero bo
 
 | Physical pin | BCM GPIO | Role |
 |-------------|----------|------|
-| **7** | **GPIO4** | FM transmit output — connect antenna wire |
-| 6, 9, 14, 20, 25 … | GND | Ground (any GND pin works) |
+| **7** | **GPIO4** | FM transmit output — connect antenna wire here |
+| **6** | GND | Nearest GND to GPIO4 — recommended ground plane pin |
+| 9, 14, 20, 25 … | GND | Any other GND also works for the ground plane |
 
 The ACT LED is an on-board LED controlled via `/sys/class/leds/led0`; it is not a header pin.
 
 ### Antenna Wiring
 
-Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is provided through the Pi's internal circuits; a separate ground wire is not required for basic operation, but connecting one to any GND pin can improve signal quality.
+Connect a 10–20 cm insulated wire to **physical pin 7** (GPIO4). Ground is provided through the Pi's internal circuits; a separate ground wire is not required for basic operation. For better signal and less interference, add a **ground plane wire**: connect a second wire to **pin 6 (GND)** — the closest GND pin to GPIO4 — and run it horizontally away from the board, roughly the same length as the antenna.
+
+**FM antenna setup (side view, GPIO header at left):**
+
+```
+       │
+       │  <- antenna wire (vertical, away from board)
+       │     10–20 cm for room range; ~75 cm (quarter-wave) for max range
+       │
+───────┼── pin 7  GPIO4  ─────────────────────────────────
+                                  Pi board (edge-on view)
+───────┼── pin 6  GND    ─────────────────────────────────
+       │
+       └──────────────────── ground plane wire (optional)
+                             run horizontally, ~same length as antenna
+```
 
 **Wire type and length:**
 

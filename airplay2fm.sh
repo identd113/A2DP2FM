@@ -121,10 +121,11 @@ show_board_art() {
 
    Board viewed from above, GPIO header along the top edge:
    ┌──────────────────────────────────────────────────────────┐
-   │  2› o o o o o o o o o o o o o o o o o o o o ‹40          │
+   │  2› o o ${HL}*${RST} o o o o o o o o o o o o o o o o o ‹40          │
    │  1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39          │
-   │           │                                              │
-   │           └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}           │
+   │         │ │                                              │
+   │         │ └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}           │
+   │         └──── ${HL}PIN 6 (GND): ground plane wire here${RST}        │
    │                                                    ┌─────┤
    │ ‹SD card                                           │ USB │
    │  (underside,                                       │ USB │
@@ -142,10 +143,11 @@ EOF
 
    Board viewed from above, GPIO header along the top edge:
    ┌────────────────────────────────────────────────────┐
-   │ 2› o o o o o o o o o o o o o o o o o o o o ‹40     │
+   │ 2› o o ${HL}*${RST} o o o o o o o o o o o o o o o o o ‹40     │
    │ 1› o o o ${HL}#${RST} o o o o o o o o o o o o o o o o ‹39     │
-   │          │                                         │
-   │          └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}      │
+   │        │ │                                         │
+   │        │ └── ${HL}PIN 7 (GPIO4): antenna wire here${RST}      │
+   │        └──── ${HL}PIN 6 (GND): ground plane wire here${RST}   │
    │ ‹SD card                                     [CAM] │
    │      [mini-HDMI]      [USB]  [PWR]                 │
    └────────────────────────────────────────────────────┘
@@ -156,9 +158,10 @@ EOF
    Rear panel, viewed from behind the keyboard:
    ┌──────────────────────────────────────────────────────────┐
    │ 39› o o o o o o o o o o o o o o o o ${HL}#${RST} o o o ‹1           │
-   │ 40› o o o o o o o o o o o o o o o o o o o o ‹2           │
-   │                                     │                    │
-   │     ${HL}PIN 7 (GPIO4): antenna wire${RST} ────┘                    │
+   │ 40› o o o o o o o o o o o o o o o o o ${HL}*${RST} o o ‹2           │
+   │                                     │ │                  │
+   │     ${HL}PIN 7 (GPIO4): antenna wire${RST} ────┘ │                  │
+   │     ${HL}PIN 6 (GND): ground plane  ${RST} ───────┘                  │
    │ [GPIO header] [SD] [HDMI][HDMI] [USB-C] [USB][USB] [ETH] │
    └──────────────────────────────────────────────────────────┘
    Note: the Pi 400/500 header is mirrored vs. a regular Pi --
@@ -170,7 +173,7 @@ EOF
    Generic 40-pin header (pin 1 is nearest the SD-card end):
       3V3  (1)  (2)  5V
     GPIO2  (3)  (4)  5V
-    GPIO3  (5)  (6)  GND
+    GPIO3  (5)  (6)  GND   ◀── ${HL}PIN 6 (GND): ground plane wire here${RST}
     GPIO4 ${HL}›(7)‹${RST} (8)  GPIO14   ◀── ${HL}PIN 7 (GPIO4): antenna wire here${RST}
       GND  (9) (10)  GPIO15
            ... continues to (40)
@@ -179,13 +182,28 @@ EOF
   esac
   cat <<EOF
 
-   Antenna wire: insulated solid-core hookup wire (20-24 AWG) or a
-   female-ended jumper (Dupont) wire pushed straight onto the pin --
-   no soldering required. Length: 10-20 cm for room-level range
-   (recommended, keeps the signal polite); ~75 cm (quarter-wave)
-   maximizes range where legal. Run the wire vertically, away from
-   the board, and make sure it touches no other pin. A second wire
-   on any GND pin is optional but can improve signal quality.
+   Antenna: solid-core hookup wire (20-24 AWG) or a female-ended
+   jumper (Dupont) wire pushed straight onto pin 7 -- no soldering
+   needed. Run it straight up, away from the board. Length: 10-20 cm
+   for room-level range (keeps the signal polite); ~75 cm
+   (quarter-wave at ~100 MHz) for maximum range where legal.
+
+   Ground plane (optional, improves signal): connect a wire to
+   pin 6 (GND) -- the nearest GND pin to GPIO4. Run it horizontally
+   away from the board, roughly the same length as the antenna.
+
+   FM antenna setup (side view, GPIO header at left):
+
+          │
+          │  <- antenna wire (vertical, away from board)
+          │     10-20 cm typical; ~75 cm (quarter-wave) for max range
+          │
+   ───────┼── pin 7  GPIO4  ─────────────────────────────────────
+                                      Pi board (edge-on view)
+   ───────┼── pin 6  GND    ─────────────────────────────────────
+          │
+          └──────────────────── ground plane wire (optional)
+                                run horizontally, ~antenna length
 
 EOF
 }

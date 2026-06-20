@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Ground plane docs and side-view antenna diagram** — installer board art now marks
+  pin 6 (GND, the nearest GND to GPIO4) as the recommended ground plane connection on
+  all board variants (full-size, Zero, Pi 400). A new side-view ASCII diagram in the
+  installer footer and README shows the vertical antenna wire on pin 7 and the optional
+  horizontal ground plane wire on pin 6.
+
 ### Changed
 - **PiFmRds build skip on re-install** — both installers now run `git pull --ff-only` on an existing
   clone before deciding whether to recompile. The compiled binary is reused as long as the git HEAD
