@@ -462,6 +462,8 @@ fi
 log "Clone & build PiFmRds"
 if [[ ! -d "$PIFM_DIR" ]]; then
   sudo -u "$PI_USER" "$GIT_CLONE_CMD" clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
+else
+  sudo -u "$PI_USER" git -C "$PIFM_DIR" pull --ff-only || true
 fi
 _pifm_binary="$PIFM_DIR/src/pi_fm_rds"
 _pifm_stamp="$PIFM_DIR/src/.built_commit"

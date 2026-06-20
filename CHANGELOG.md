@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **PiFmRds build skip on re-install** — both installers now run `git pull --ff-only` on an existing
+  clone before deciding whether to recompile. The compiled binary is reused as long as the git HEAD
+  matches the `.built_commit` stamp written at last build time. Re-running the installer is now fast
+  when PiFmRds has not changed upstream.
+
 ---
 
 ## 2026-06-15

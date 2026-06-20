@@ -116,6 +116,18 @@ Key behaviors to preserve if modifying:
 - The `shairport-sync.service` unit is only removed if it contains the `Managed by airplay2fm` marker (meaning it was written by our installer, not the distro package manager).
 - The `--bt`, `--airplay`, `--all`, and `--yes` flags allow non-interactive / scripted removal.
 
+## PiFmRds Build Cache
+
+Both installers skip recompilation when the binary is already current. The logic:
+
+1. If `$PI_HOME/PiFmRds` does not exist, `git clone` it.
+2. If it does exist, `git pull --ff-only` to pick up upstream changes (failure is non-fatal — network may be offline).
+3. After clone/pull, `git rev-parse HEAD` is compared against the stamp file `src/.built_commit`.
+4. If the binary (`src/pi_fm_rds`) is executable **and** the stamp matches HEAD, recompilation is skipped.
+5. Otherwise `make clean && make` runs and the new HEAD is written to the stamp.
+
+This means re-running the installer is fast when nothing changed upstream. The `--ff-only` flag prevents the pull from creating merge commits (PiFmRds is upstream-only with no local modifications expected).
+
 ## Code Style and Structure
 
 - Bash only (`#!/usr/bin/env bash`), `set -euo pipefail` throughout.
