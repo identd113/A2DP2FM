@@ -463,11 +463,21 @@ log "Clone & build PiFmRds"
 if [[ ! -d "$PIFM_DIR" ]]; then
   sudo -u "$PI_USER" "$GIT_CLONE_CMD" clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
 fi
-pushd "$PIFM_DIR/src" >/dev/null
-sudo -u "$PI_USER" make clean || true
-sudo -u "$PI_USER" make
-popd >/dev/null
-INSTALL_SUMMARY+=("PiFmRds built in $PIFM_DIR/src")
+_pifm_binary="$PIFM_DIR/src/pi_fm_rds"
+_pifm_stamp="$PIFM_DIR/src/.built_commit"
+_pifm_head=$(sudo -u "$PI_USER" git -C "$PIFM_DIR" rev-parse HEAD 2>/dev/null || true)
+_pifm_built=$(cat "$_pifm_stamp" 2>/dev/null || true)
+if [[ -x "$_pifm_binary" && -n "$_pifm_head" && "$_pifm_head" == "$_pifm_built" ]]; then
+  log "PiFmRds already up-to-date (${_pifm_head:0:7}); skipping recompile"
+  INSTALL_SUMMARY+=("PiFmRds up-to-date in $PIFM_DIR/src (skipped recompile)")
+else
+  pushd "$PIFM_DIR/src" >/dev/null
+  sudo -u "$PI_USER" make clean || true
+  sudo -u "$PI_USER" make
+  popd >/dev/null
+  [[ -n "$_pifm_head" ]] && echo "$_pifm_head" > "$_pifm_stamp" || true
+  INSTALL_SUMMARY+=("PiFmRds built in $PIFM_DIR/src")
+fi
 
 # ---- Runtime config ----
 log "Runtime config: /etc/default/airplay2fm"
@@ -523,6 +533,7 @@ while true; do
   # sox wraps the headerless raw PCM (S16_LE 44100 Hz stereo) from
   # shairport-sync in a WAV container so pi_fm_rds (libsndfile) can read it.
   cat "$AUDIO_PIPE" \
+    | tee >(python3 /usr/local/bin/airplay-level.py 2>/dev/null || true) \
     | sox -t raw -r 44100 -e signed -b 16 -c 2 - -t wav - \
     | sudo "$PIFM" -freq "$CURF" -ps "AP-PI" -rt "AirPlay audio" -ctl "$RDSCTL" -audio - \
     || true
@@ -531,6 +542,45 @@ done
 APFM
 finalize_script "$BIN_DIR/airplay2fm.sh"
 INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay2fm.sh")
+
+cat >"$BIN_DIR/airplay-level.py" <<'LVLPY'
+#!/usr/bin/env python3
+"""Read raw S16_LE stereo 44100 Hz PCM from stdin; write RMS level to /run/airplay_level every 50 ms."""
+import sys, struct, math
+
+CHUNK = 8820   # 50 ms of 44100 Hz stereo S16_LE  (44100 * 0.05 * 2ch * 2B)
+LEVEL = "/run/airplay_level"
+
+def run():
+    while True:
+        try:
+            data = sys.stdin.buffer.read(CHUNK)
+        except Exception:
+            break
+        if not data:
+            break
+        n = len(data) // 2
+        if not n:
+            continue
+        try:
+            s   = struct.unpack_from('<' + 'h' * n, data[:n * 2])
+            rms = min(1.0, math.sqrt(sum(x * x for x in s) / n) / 32768.0)
+            with open(LEVEL, 'w') as f:
+                f.write('%.4f' % rms)
+        except Exception:
+            pass
+
+try:
+    run()
+finally:
+    try:
+        with open(LEVEL, 'w') as f:
+            f.write('0.0000')
+    except Exception:
+        pass
+LVLPY
+finalize_script "$BIN_DIR/airplay-level.py"
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay-level.py")
 
 cat >"$SYSUNIT_DIR/airplay2fm.service" <<EOF
 # Managed by airplay2fm (installer script)
@@ -610,10 +660,18 @@ from xml.etree import ElementTree as ET
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-META_PIPE = "/run/airplay_metadata"
-RDSCTL    = "/run/rds_ctl"
-CONFIG    = "/etc/default/airplay2fm"
-ANNOUNCE  = "/usr/local/bin/airplay_announce.sh"
+META_PIPE  = "/run/airplay_metadata"
+RDSCTL     = "/run/rds_ctl"
+CONFIG     = "/etc/default/airplay2fm"
+ANNOUNCE   = "/usr/local/bin/airplay_announce.sh"
+LEVEL_FILE = "/run/airplay_level"
+
+def _get_level():
+    try:
+        with open(LEVEL_FILE) as f:
+            return min(1.0, max(0.0, float(f.read().strip())))
+    except Exception:
+        return 0.0
 
 def read_config():
     cfg = {}
@@ -642,7 +700,7 @@ def write_freq(new):
 # Shared UI state — updated by the metadata loop, read by the HTTP handler
 # ---------------------------------------------------------------------------
 _ui_lock  = threading.Lock()
-_ui_state = {"play_state": "idle", "title": "", "artist": "", "album": ""}
+_ui_state = {"play_state": "idle", "title": "", "artist": "", "album": "", "volume": None}
 
 def _set_ui(**kw):
     with _ui_lock:
@@ -662,6 +720,7 @@ def _get_status():
         "title":      st["title"],
         "artist":     st["artist"],
         "album":      st["album"],
+        "volume":     st["volume"],
     }
 
 # ---------------------------------------------------------------------------
@@ -673,88 +732,172 @@ _HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#111111">
+<meta name="theme-color" content="#0a0a0a">
 <title>Pi FM</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:400px;margin:0 auto;padding:1.25rem;min-height:100dvh}
-h1{font-size:.8rem;font-weight:600;color:#555;letter-spacing:.1em;text-transform:uppercase;margin-bottom:1.25rem}
-.freq{font-size:5rem;font-weight:700;text-align:center;color:#f80;line-height:1;letter-spacing:-.02em}
-.unit{text-align:center;color:#555;font-size:.9rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin:.25rem 0 1rem}
-.card{background:#1c1c1c;border-radius:12px;padding:.875rem 1rem;margin-bottom:.75rem;min-height:4rem}
-.badge{display:inline-flex;align-items:center;gap:.35rem;font-size:.65rem;font-weight:700;padding:.2rem .55rem;border-radius:999px;background:#222;color:#555;margin-bottom:.5rem;letter-spacing:.06em;text-transform:uppercase}
-.dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
-.badge.active{background:#0b3d0b;color:#3d3}
-.badge.paused{background:#3d2c00;color:#b80}
-.track-title{font-size:1rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub{color:#555;font-size:.85rem;margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#e8e8e8;max-width:420px;margin:0 auto;padding:1.25rem 1rem 2rem;min-height:100dvh}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.4rem}
+.logo{font-size:.72rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3a3a3a}
+.live{display:flex;align-items:center;gap:.38rem;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3a3a3a}
+.live .ld{width:6px;height:6px;border-radius:50%;background:#333;flex-shrink:0}
+.live.on{color:#3c3}
+.live.on .ld{background:#3c3;box-shadow:0 0 6px #3c3;animation:blip 1.6s ease-in-out infinite}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.3}}
+.fcard{background:linear-gradient(160deg,#161616,#111);border:1px solid #1e1e1e;border-radius:20px;padding:1.6rem 1rem 1.3rem;text-align:center;margin-bottom:.75rem;position:relative;overflow:hidden}
+.fcard::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:55%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,153,0,.5),transparent)}
+.fnum{font-size:5.5rem;font-weight:800;color:#ff9900;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums;text-shadow:0 0 50px rgba(255,153,0,.25)}
+.funit{font-size:.75rem;font-weight:700;color:#3a3a3a;letter-spacing:.18em;text-transform:uppercase;margin-top:.45rem}
+.card{background:#141414;border:1px solid #1e1e1e;border-radius:16px;padding:.9rem 1rem;margin-bottom:.75rem}
+.badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.6rem;font-weight:700;padding:.18rem .5rem;border-radius:999px;background:#1e1e1e;color:#444;letter-spacing:.07em;text-transform:uppercase;margin-bottom:.55rem}
+.bdot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.badge.playing{background:#0a320a;color:#3c3}
+.badge.paused{background:#38280a;color:#b80}
+.ttl{font-size:1.02rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.35em}
+.sub{color:#484848;font-size:.83rem;margin-top:.18rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.2em}
+.vcard{background:#141414;border:1px solid #1e1e1e;border-radius:16px;padding:.9rem 1rem .85rem;margin-bottom:.75rem}
+.vlbl{font-size:.58rem;font-weight:700;color:#2e2e2e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.6rem;display:flex;justify-content:space-between;align-items:center}
+.vlbl span{color:#3a3a3a;font-weight:600;font-size:.6rem}
+.bars{display:flex;align-items:flex-end;gap:3px;height:44px;margin-bottom:.8rem}
+.bar{flex:1;border-radius:2px 2px 0 0;background:#ff9900;min-height:3px;height:3px;opacity:.2;transition:height .08s ease,opacity .08s ease}
+.volrow{display:flex;align-items:center;gap:.6rem}
+.vt{font-size:.58rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;flex-shrink:0;width:2.2rem;color:#3a3a3a}
+.vtrack{flex:1;height:5px;background:#1e1e1e;border-radius:4px;overflow:hidden}
+.vfill{height:100%;border-radius:4px;background:#3c3;width:0%;transition:width .5s ease,background .5s ease}
+.vfill.mid{background:#c90}
+.vfill.low{background:#c33}
+.vpct{font-size:.62rem;font-weight:700;color:#3a3a3a;flex-shrink:0;width:2.4rem;text-align:right;font-variant-numeric:tabular-nums}
 .btns{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem}
-button{padding:.9rem;font-size:1rem;font-weight:600;background:#1c1c1c;color:#eee;border:1px solid #242424;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent}
-button:active{background:#2a2a2a}
+.btn{padding:.88rem;font-size:.95rem;font-weight:600;background:#141414;color:#c0c0c0;border:1px solid #1e1e1e;border-radius:14px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .1s,transform .1s,color .1s}
+.btn:active{background:#202020;transform:scale(.96)}
+.bsm{font-size:.8rem;color:#444}
 .setrow{display:flex;gap:.5rem}
-.setrow input{flex:1;background:#1c1c1c;border:1px solid #242424;border-radius:12px;color:#eee;font-size:1rem;padding:.7rem .9rem;-moz-appearance:textfield}
+.setrow input{flex:1;background:#141414;border:1px solid #1e1e1e;border-radius:14px;color:#e8e8e8;font-size:1rem;padding:.78rem 1rem;-moz-appearance:textfield;outline:none;transition:border-color .15s}
+.setrow input:focus{border-color:#2e2e2e}
 .setrow input::-webkit-outer-spin-button,.setrow input::-webkit-inner-spin-button{-webkit-appearance:none}
-.setrow button{flex:0 0 auto;padding:.7rem 1.1rem}
-.meta{text-align:center;color:#333;font-size:.7rem;margin-top:.9rem}
+.setrow .btn{flex:0 0 auto;padding:.78rem 1.1rem}
+.meta{text-align:center;color:#262626;font-size:.62rem;margin-top:.9rem;letter-spacing:.05em}
 </style>
 </head>
 <body>
-<h1 id="apn">Pi FM</h1>
-<div class="freq" id="freq">—</div>
-<div class="unit">MHz</div>
+<div class="header">
+  <div class="logo" id="apn">Pi FM</div>
+  <div class="live" id="live"><span class="ld"></span><span id="lst">Idle</span></div>
+</div>
+<div class="fcard">
+  <div class="fnum" id="freq">—</div>
+  <div class="funit">MHz &middot; FM</div>
+</div>
 <div class="card">
-  <div class="badge" id="badge"><span class="dot"></span><span id="st">Idle</span></div>
-  <div class="track-title" id="title"></div>
-  <div class="sub" id="sub"></div>
+  <div class="badge" id="badge"><span class="bdot"></span><span id="st">Idle</span></div>
+  <div class="ttl" id="ttl">&nbsp;</div>
+  <div class="sub" id="sub">&nbsp;</div>
+</div>
+<div class="vcard">
+  <div class="vlbl">Signal &amp; Level<span id="volwarn"></span></div>
+  <div class="bars" id="bars"></div>
+  <div class="volrow">
+    <div class="vt">Vol</div>
+    <div class="vtrack"><div class="vfill" id="vf"></div></div>
+    <div class="vpct" id="vpct">&mdash;</div>
+  </div>
 </div>
 <div class="btns">
-  <button onclick="tune(-1)">&#9664; Down</button>
-  <button onclick="tune(1)">Up &#9654;</button>
+  <button class="btn" onclick="tune(-1)">&#9664; Down</button>
+  <button class="btn" onclick="tune(1)">Up &#9654;</button>
 </div>
 <div class="btns">
-  <button onclick="jumpTo(87.9)">&#9660; 87.9</button>
-  <button onclick="jumpTo(107.9)">107.9 &#9650;</button>
+  <button class="btn bsm" onclick="jumpTo(87.9)">&#9660; 87.9</button>
+  <button class="btn bsm" onclick="jumpTo(107.9)">107.9 &#9650;</button>
 </div>
 <div class="setrow">
   <input type="number" id="nf" step="0.1" min="87.1" placeholder="MHz">
-  <button onclick="setf()">Set</button>
+  <button class="btn" onclick="setf()">Set</button>
 </div>
 <div class="meta" id="meta"></div>
 <script>
-var D=document,S={freq:'87.9',step:'0.2',fmin:'87.7',fmax:'107.9',play_state:'idle',title:'',artist:'',album:'',ap_name:'Pi FM'};
-function render(d){
-  S=d;
-  D.getElementById('freq').textContent=d.freq;
-  D.getElementById('apn').textContent=d.ap_name||'Pi FM';
-  D.getElementById('title').textContent=d.title||'';
-  D.getElementById('sub').textContent=[d.artist,d.album].filter(Boolean).join(' · ');
-  var b=D.getElementById('badge');
-  D.getElementById('st').textContent={active:'Playing',paused:'Paused',idle:'Idle'}[d.play_state]||'Idle';
-  b.className='badge'+(d.play_state==='active'?' active':d.play_state==='paused'?' paused':'');
-  var nf=D.getElementById('nf'); nf.min=d.fmin; nf.max=d.fmax; nf.step=d.step;
-  D.getElementById('meta').textContent='Step '+d.step+' MHz  ·  '+d.fmin+'–'+d.fmax;
+var N = 22;
+var barsEl = document.getElementById('bars');
+for (var i = 0; i < N; i++) {
+  var b = document.createElement('div'); b.className = 'bar'; barsEl.appendChild(b);
 }
-function poll(){fetch('/api/status').then(function(r){return r.json()}).then(render).catch(function(){});}
-function tune(dir){
-  var cur=parseFloat(S.freq),step=parseFloat(S.step),mn=parseFloat(S.fmin),mx=parseFloat(S.fmax);
-  var nv=+(Math.min(Math.max(cur+dir*step,mn),mx).toFixed(1));
-  D.getElementById('freq').textContent=nv;
-  S.freq=''+nv;
-  fetch('/api/'+(dir>0?'up':'down'),{method:'POST'}).then(function(){setTimeout(poll,250)});
+var bars = barsEl.querySelectorAll('.bar');
+var barEnv = new Array(N).fill(0);
+var playing = false;
+var S = {freq:'87.9',step:'0.2',fmin:'87.7',fmax:'107.9',play_state:'idle',
+         title:'',artist:'',album:'',ap_name:'Pi FM',volume:null};
+
+function updateBars(level) {
+  for (var i = 0; i < bars.length; i++) {
+    var target = level * (0.35 + Math.random() * 0.65) * 40;
+    barEnv[i] = target > barEnv[i]
+      ? barEnv[i] * 0.25 + target * 0.75   // fast attack
+      : barEnv[i] * 0.78 + target * 0.22;  // slow decay
+    var h = Math.max(3, barEnv[i]);
+    bars[i].style.height = h + 'px';
+    bars[i].style.opacity = 0.18 + (h / 44) * 0.82;
+  }
 }
-function jumpTo(f){
-  D.getElementById('freq').textContent=f;
-  fetch('/api/freq',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'freq='+encodeURIComponent(f)}).then(function(){setTimeout(poll,250)});
+
+function pollLevel() {
+  if (!playing) { updateBars(0); return; }
+  fetch('/api/level').then(function(r){return r.json();}).then(function(d){
+    updateBars(d.level || 0);
+  }).catch(function(){updateBars(0);});
 }
-function setf(){
-  var v=parseFloat(D.getElementById('nf').value); if(isNaN(v)) return;
-  var nv=+(Math.min(Math.max(v,87.1),parseFloat(S.fmax)).toFixed(1));
-  D.getElementById('freq').textContent=nv;
-  fetch('/api/freq',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'freq='+encodeURIComponent(nv)}).then(function(){setTimeout(poll,250)});
+setInterval(pollLevel, 150);
+
+function render(d) {
+  S = d;
+  document.getElementById('freq').textContent = d.freq;
+  document.getElementById('apn').textContent = d.ap_name || 'Pi FM';
+  var active = d.play_state === 'active', paused = d.play_state === 'paused';
+  var stMap = {active:'Playing', paused:'Paused', idle:'Idle'};
+  document.getElementById('st').textContent = stMap[d.play_state] || 'Idle';
+  document.getElementById('badge').className = 'badge' + (active ? ' playing' : paused ? ' paused' : '');
+  var live = document.getElementById('live');
+  document.getElementById('lst').textContent = active ? 'Live' : 'Idle';
+  live.className = 'live' + (active ? ' on' : '');
+  document.getElementById('ttl').textContent = d.title || (active ? 'AirPlay Stream' : ' ');
+  document.getElementById('sub').textContent = [d.artist, d.album].filter(Boolean).join(' · ') || ' ';
+  var nf = document.getElementById('nf'); nf.min = d.fmin; nf.max = d.fmax; nf.step = d.step;
+  document.getElementById('meta').textContent = 'Step ' + d.step + ' MHz  ·  ' + d.fmin + '–' + d.fmax;
+  playing = active;
+  if (!active) { updateBars(0); }
+  var vf = document.getElementById('vf'), vp = document.getElementById('vpct');
+  var warn = document.getElementById('volwarn');
+  if (d.volume !== null && d.volume !== undefined) {
+    var pct = d.volume <= -144 ? 0 : Math.round(Math.max(0, Math.min(100, (d.volume + 30) / 30 * 100)));
+    vf.style.width = pct + '%';
+    vp.textContent = pct + '%';
+    vf.className = 'vfill' + (pct < 25 ? ' low' : pct < 55 ? ' mid' : '');
+    warn.textContent = pct < 25 ? '⚠ Low' : '';
+    warn.style.color = pct < 25 ? '#c33' : '';
+  } else {
+    vf.style.width = active ? '60%' : '0%';
+    vf.className = 'vfill'; vp.textContent = '—'; warn.textContent = '';
+  }
 }
-poll(); setInterval(poll,5000);
+function poll() { fetch('/api/status').then(function(r){return r.json();}).then(render).catch(function(){}); }
+function tune(dir) {
+  var cur = parseFloat(S.freq), step = parseFloat(S.step);
+  var nv = +(Math.min(Math.max(cur + dir*step, parseFloat(S.fmin)), parseFloat(S.fmax)).toFixed(1));
+  document.getElementById('freq').textContent = nv; S.freq = '' + nv;
+  fetch('/api/' + (dir > 0 ? 'up' : 'down'), {method:'POST'}).then(function(){setTimeout(poll,250);});
+}
+function jumpTo(f) {
+  document.getElementById('freq').textContent = f;
+  fetch('/api/freq', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'freq=' + encodeURIComponent(f)}).then(function(){setTimeout(poll,250);});
+}
+function setf() {
+  var v = parseFloat(document.getElementById('nf').value); if (isNaN(v)) return;
+  var nv = +(Math.min(Math.max(v, 87.1), parseFloat(S.fmax)).toFixed(1));
+  document.getElementById('freq').textContent = nv;
+  fetch('/api/freq', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'freq=' + encodeURIComponent(nv)}).then(function(){setTimeout(poll,250);});
+}
+poll(); setInterval(poll, 3000);
 </script>
 </body>
 </html>"""
@@ -806,6 +949,14 @@ class _TunerHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path == "/api/status":
             body = json.dumps(_get_status()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/api/level":
+            body = json.dumps({"level": _get_level()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1132,15 +1283,16 @@ def main():
                                 title="", artist="", album="")
                             _restore_at = 0.0
                         elif code == "pvol":
-                            if not vol_tune:
-                                continue
                             try:
                                 vol = float(value.split(",")[0])
                             except (ValueError, IndexError):
                                 continue
                             logger.debug(f"pvol {vol} (state={play_state})")
                             _current_vol = vol
+                            _set_ui(volume=vol)
                             prev, last_vol = last_vol, vol
+                            if not vol_tune:
+                                continue
                             if prev is None or vol == prev or play_state == "active":
                                 continue
                             if time.time() < _suppress_until:

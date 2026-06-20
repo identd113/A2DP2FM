@@ -552,11 +552,21 @@ log "Clone & build PiFmRds"
 if [[ ! -d "$PIFM_DIR" ]]; then
   sudo -u "$PI_USER" "$GIT_CLONE_CMD" clone https://github.com/ChristopheJacquet/PiFmRds.git "$PIFM_DIR"
 fi
-pushd "$PIFM_DIR/src" >/dev/null
-sudo -u "$PI_USER" make clean || true
-sudo -u "$PI_USER" make
-popd >/dev/null
-INSTALL_SUMMARY+=("PiFmRds built in $PIFM_DIR/src")
+_pifm_binary="$PIFM_DIR/src/pi_fm_rds"
+_pifm_stamp="$PIFM_DIR/src/.built_commit"
+_pifm_head=$(sudo -u "$PI_USER" git -C "$PIFM_DIR" rev-parse HEAD 2>/dev/null || true)
+_pifm_built=$(cat "$_pifm_stamp" 2>/dev/null || true)
+if [[ -x "$_pifm_binary" && -n "$_pifm_head" && "$_pifm_head" == "$_pifm_built" ]]; then
+  log "PiFmRds already up-to-date (${_pifm_head:0:7}); skipping recompile"
+  INSTALL_SUMMARY+=("PiFmRds up-to-date in $PIFM_DIR/src (skipped recompile)")
+else
+  pushd "$PIFM_DIR/src" >/dev/null
+  sudo -u "$PI_USER" make clean || true
+  sudo -u "$PI_USER" make
+  popd >/dev/null
+  [[ -n "$_pifm_head" ]] && echo "$_pifm_head" > "$_pifm_stamp" || true
+  INSTALL_SUMMARY+=("PiFmRds built in $PIFM_DIR/src")
+fi
 
 log "Runtime config: /etc/default/bt2fm"
 _bt2fm_cfg="$(mktemp)" || { log "ERROR: Failed to create temp file"; exit 1; }

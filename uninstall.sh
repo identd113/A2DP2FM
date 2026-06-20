@@ -369,13 +369,15 @@ do_uninstall_airplay() {
   for f in \
     /usr/local/bin/airplay2fm.sh \
     /usr/local/bin/airplay-rds.py \
+    /usr/local/bin/airplay-level.py \
     /usr/local/bin/airplay_announce.sh \
     /usr/local/bin/led-airplay-statusd.sh \
     /etc/default/airplay2fm \
     /etc/tmpfiles.d/airplay2fm.conf \
     /run/airplay_announce.wav \
     /run/airplay_audio \
-    /run/airplay_metadata; do
+    /run/airplay_metadata \
+    /run/airplay_level; do
     rm_file "$f"
   done
 
