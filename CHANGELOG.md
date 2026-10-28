@@ -11,6 +11,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Antenna + ground plane on real Pi 3** — pin 7 (GPIO4) antenna wire
   and pin 9 (GND) ground plane wire physically installed and confirmed.
 
+### Fixed
+- **shairport-sync source build failed on current upstream** — shairport-sync now builds with FFmpeg support by
+  default and `configure` stops without `libavutil`. `airplay2fm.sh` now installs `libavutil-dev`, `libavcodec-dev`,
+  `libavformat-dev` and `libswresample-dev` before building.
+- **Tuner server hung on an idle connection** — `HTTPServer` was single-threaded with no timeout; it is now a
+  `ThreadingHTTPServer` with a 10 s per-connection timeout.
+- **`freq=nan` corrupted the config** — absolute tuning now rejects non-finite input (`400`), and `write_freq()`
+  refuses non-finite values and writes the config atomically (temp file + `os.replace`).
+- **Manual frequency ignored `FMIN`** — the hard-coded 87.1 lower bound (Python and page JS) is replaced by `FMIN`.
+- **Cross-site tuning** — POSTs now require `X-Requested-With: pifm` and a same-origin `Origin`, and `Host` is
+  restricted (IP literal, single-label or `*.local`), so a web page open on the LAN cannot retune the transmitter.
+
+### Changed (web UI)
+- **Classic-radio tuner page** — walnut cabinet, lit dial with sliding needle, amber RDS display with scrolling
+  now-playing text, needle level meter, volume LEDs, tuning knob (drag / wheel / keyboard), Tune −/+ buttons,
+  four preset keys (hold to store, kept in the browser) and a Set field. Tuning is debounced so one gesture
+  causes one retune and announcement. No external assets.
+
 ### Added
 - **Ground plane docs and side-view antenna diagram** — installer board art now marks
   pin 6 (GND, the nearest GND to GPIO4) as the recommended ground plane connection on

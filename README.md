@@ -36,7 +36,7 @@ Both scripts share the same FM transmitter hardware (GPIO 4 antenna, PiFmRds), L
 * **Zero-config AirPlay discovery** – Advertises itself on the local network via Avahi/Bonjour; appears instantly in iOS Control Center and macOS audio output.
 * **AirPlay audio pipeline** – Uses `shairport-sync` with its pipe backend; `sox` wraps the raw PCM in a WAV container and feeds it into PiFmRds.
 * **Metadata to RDS** – Reads shairport-sync's metadata pipe to populate RDS PS/RT fields with the playing track.
-* **Web tuner UI** – A built-in HTTP server on port 8750 serves a mobile-friendly page showing the current frequency, now-playing track, and play state, with Up/Down step buttons and a direct-entry frequency field. Changes persist across restarts.
+* **Web tuner UI** – A built-in HTTP server on port 8750 serves a classic-radio page: a lit tuning dial with a sliding needle, an amber RDS display (frequency, play state, scrolling now-playing text), a needle level meter, volume LEDs, a tuning knob, Tune −/+ buttons, four preset piano keys and a direct-entry field. Changes persist across restarts.
 * **Volume-key frequency control** *(opt-in, `--vol-tune`)* – Press the sender's volume buttons while playback is **paused** to shift the FM frequency. Rapid presses are batched: ~3 s after the last press, the net change applies in one move (3 up-clicks = +0.6 MHz at the default 0.2 step), announced on the old frequency and confirmed on the new one. Sender volume is restored via the DACP back-channel when playback resumes.
 * **FM carrier on demand** – The transmitter runs only while audio is playing; carrier is off when idle.
 
@@ -292,7 +292,7 @@ What the installer does:
 3. Tune a nearby FM radio to the configured frequency.
 4. Start playing audio — the FM carrier comes on automatically.
 5. Pause or stop playback to silence the transmitter; RDS resets to the device name.
-6. **To change frequency:** open `http://<pi-hostname>:8750/` in any browser on the same network. The page shows the current frequency, now-playing info, and play state. Tap **Down** or **Up** to step by 0.2 MHz, or type a frequency directly and tap **Set**. Changes take effect immediately (the pipeline restarts with the new frequency) and persist through reboots.
+6. **To change frequency:** open `http://<pi-hostname>:8750/` in any browser on the same network. The page shows the current frequency, now-playing info, and play state. Turn the knob (drag, scroll wheel or arrow keys), drag or click the dial, or tap **Tune ◀ / ▶** to step by 0.2 MHz; type a frequency and tap **Set** for an exact value; hold a preset key to store the current station (presets are kept in the browser). Tuning gestures are batched, so one retune and announcement follows each gesture. Changes take effect shortly after (the pipeline restarts with the new frequency) and persist through reboots.
 7. *(Optional, `--vol-tune` only)* To change frequency with the volume rocker: **pause, then press volume up/down right away** (iOS only routes the rocker to AirPlay for a few seconds after pausing). Presses are batched — ~3 s after the last press, the net change applies in one move (3 ups = +0.6 MHz), with an LED flash and TTS announcement. Sender volume is restored automatically on resume.
 
 ### LED behavior

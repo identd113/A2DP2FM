@@ -321,6 +321,7 @@ declare -a APT_PACKAGES=(
   git build-essential autoconf automake libtool pkg-config
   libssl-dev libavahi-client-dev libasound2-dev libpopt-dev libconfig-dev
   libsystemd-dev avahi-daemon libnss-mdns
+  libavutil-dev libavcodec-dev libavformat-dev libswresample-dev   # shairport-sync >= 5.x builds with FFmpeg by default
   avahi-utils sox flite python3
 )
 
@@ -674,8 +675,8 @@ log "AirPlay metadata -> RDS (PS/RT) + volume-key frequency daemon"
 cat >"$BIN_DIR/airplay-rds.py" <<'PYAP'
 #!/usr/bin/env python3
 """AirPlay metadata -> RDS PS/RT; HTTP tuner UI; optional volume-key frequency control."""
-import base64, json, logging, os, re, subprocess, threading, time, urllib.parse, urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import base64, json, logging, math, os, re, shutil, subprocess, threading, time, urllib.parse, urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from xml.etree import ElementTree as ET
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -708,12 +709,18 @@ def read_config():
     return cfg
 
 def write_freq(new):
+    if not math.isfinite(float(new)):
+        logger.warning(f"Refusing to write non-finite frequency {new!r}")
+        return
+    tmp = CONFIG + ".tmp"
     try:
         with open(CONFIG) as f:
             lines = f.readlines()
-        with open(CONFIG, "w") as f:
+        with open(tmp, "w") as f:
             for ln in lines:
                 f.write(f"FREQ={new}\n" if ln.startswith("FREQ=") else ln)
+        shutil.copymode(CONFIG, tmp)
+        os.replace(tmp, CONFIG)   # atomic: a crash mid-write cannot leave a truncated config
     except OSError as e:
         logger.warning(f"Config write failed: {e}")
 
@@ -747,181 +754,457 @@ def _get_status():
 # ---------------------------------------------------------------------------
 # HTTP tuner server
 # ---------------------------------------------------------------------------
-_HTML = """\
-<!DOCTYPE html>
+_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1a0f08">
 <title>Pi FM</title>
 <style>
+:root{
+  --wood-a:#6b4326;--wood-b:#4a2c17;--wood-c:#2f1a0c;
+  --brass-hi:#f3dd9a;--brass:#c9a24b;--brass-lo:#7d5f1f;
+  --cream:#efe3c4;--ink:#2c1b08;--amber:#ffb23e;--lcd:#120a03;--red:#e0301e;
+  --serif:Georgia,'Times New Roman',serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,'Segoe UI',sans-serif;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#e8e8e8;max-width:420px;margin:0 auto;padding:1.25rem 1rem 2rem;min-height:100dvh}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.4rem}
-.logo{font-size:.72rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#3a3a3a}
-.live{display:flex;align-items:center;gap:.38rem;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3a3a3a}
-.live .ld{width:6px;height:6px;border-radius:50%;background:#333;flex-shrink:0}
-.live.on{color:#3c3}
-.live.on .ld{background:#3c3;box-shadow:0 0 6px #3c3;animation:blip 1.6s ease-in-out infinite}
-@keyframes blip{0%,100%{opacity:1}50%{opacity:.3}}
-.fcard{background:linear-gradient(160deg,#161616,#111);border:1px solid #1e1e1e;border-radius:20px;padding:1.6rem 1rem 1.3rem;text-align:center;margin-bottom:.75rem;position:relative;overflow:hidden}
-.fcard::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:55%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,153,0,.5),transparent)}
-.fnum{font-size:5.5rem;font-weight:800;color:#ff9900;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums;text-shadow:0 0 50px rgba(255,153,0,.25)}
-.funit{font-size:.75rem;font-weight:700;color:#3a3a3a;letter-spacing:.18em;text-transform:uppercase;margin-top:.45rem}
-.card{background:#141414;border:1px solid #1e1e1e;border-radius:16px;padding:.9rem 1rem;margin-bottom:.75rem}
-.badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.6rem;font-weight:700;padding:.18rem .5rem;border-radius:999px;background:#1e1e1e;color:#444;letter-spacing:.07em;text-transform:uppercase;margin-bottom:.55rem}
-.bdot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
-.badge.playing{background:#0a320a;color:#3c3}
-.badge.paused{background:#38280a;color:#b80}
-.ttl{font-size:1.02rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.35em}
-.sub{color:#484848;font-size:.83rem;margin-top:.18rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.2em}
-.vcard{background:#141414;border:1px solid #1e1e1e;border-radius:16px;padding:.9rem 1rem .85rem;margin-bottom:.75rem}
-.vlbl{font-size:.58rem;font-weight:700;color:#2e2e2e;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.6rem;display:flex;justify-content:space-between;align-items:center}
-.vlbl span{color:#3a3a3a;font-weight:600;font-size:.6rem}
-.bars{display:flex;align-items:flex-end;gap:3px;height:44px;margin-bottom:.8rem}
-.bar{flex:1;border-radius:2px 2px 0 0;background:#ff9900;min-height:3px;height:3px;opacity:.2;transition:height .08s ease,opacity .08s ease}
-.volrow{display:flex;align-items:center;gap:.6rem}
-.vt{font-size:.58rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;flex-shrink:0;width:2.2rem;color:#3a3a3a}
-.vtrack{flex:1;height:5px;background:#1e1e1e;border-radius:4px;overflow:hidden}
-.vfill{height:100%;border-radius:4px;background:#3c3;width:0%;transition:width .5s ease,background .5s ease}
-.vfill.mid{background:#c90}
-.vfill.low{background:#c33}
-.vpct{font-size:.62rem;font-weight:700;color:#3a3a3a;flex-shrink:0;width:2.4rem;text-align:right;font-variant-numeric:tabular-nums}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem}
-.btn{padding:.88rem;font-size:.95rem;font-weight:600;background:#141414;color:#c0c0c0;border:1px solid #1e1e1e;border-radius:14px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .1s,transform .1s,color .1s}
-.btn:active{background:#202020;transform:scale(.96)}
-.bsm{font-size:.8rem;color:#444}
-.setrow{display:flex;gap:.5rem}
-.setrow input{flex:1;background:#141414;border:1px solid #1e1e1e;border-radius:14px;color:#e8e8e8;font-size:1rem;padding:.78rem 1rem;-moz-appearance:textfield;outline:none;transition:border-color .15s}
-.setrow input:focus{border-color:#2e2e2e}
+html{background:#0d0805}
+body{min-height:100dvh;display:flex;align-items:center;justify-content:center;
+  padding:max(1rem,env(safe-area-inset-top)) 1rem max(1rem,env(safe-area-inset-bottom));
+  font-family:var(--sans);color:var(--cream);
+  background:radial-gradient(120% 90% at 50% 15%,#2a1810 0%,#120a05 60%,#0a0603 100%)}
+.radio{width:min(100%,640px);border-radius:26px;padding:14px;
+  background:
+    repeating-linear-gradient(92deg,rgba(0,0,0,0) 0 7px,rgba(0,0,0,.10) 7px 8px,rgba(255,220,170,.04) 8px 11px),
+    linear-gradient(180deg,var(--wood-a),var(--wood-b) 55%,var(--wood-c));
+  box-shadow:0 30px 60px rgba(0,0,0,.65),0 2px 0 rgba(255,220,170,.18) inset,0 -3px 8px rgba(0,0,0,.5) inset,0 0 0 1px #000}
+.face{border-radius:16px;padding:14px 14px 16px;
+  background:linear-gradient(180deg,#2b2118,#1b140e);
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 0 4px rgba(201,162,75,.35),inset 0 8px 24px rgba(0,0,0,.6)}
+
+.top{display:flex;justify-content:space-between;align-items:center;margin:0 2px 12px}
+.plate{font-family:var(--serif);font-style:italic;font-size:1.4rem;letter-spacing:.03em;line-height:1.1;
+  background:linear-gradient(180deg,var(--brass-hi),var(--brass) 55%,var(--brass-lo));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 1px 0 rgba(0,0,0,.8))}
+.tag{font-size:.55rem;letter-spacing:.3em;text-transform:uppercase;color:var(--brass-lo);margin-top:.25rem}
+.lamp{display:flex;align-items:center;gap:.55rem;font:700 .6rem/1 var(--sans);letter-spacing:.2em;
+  text-transform:uppercase;color:#7a6a50}
+.bulb{width:16px;height:16px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#7a5a40,#2a1a10 70%);
+  box-shadow:0 0 0 2px var(--brass-lo),0 0 0 3px #000;transition:background .3s,box-shadow .3s}
+.lamp.on{color:#ffcf8a}
+.lamp.on .bulb{background:radial-gradient(circle at 35% 30%,#fff3c8,#ffb23e 45%,#c25b00 100%);
+  box-shadow:0 0 0 2px var(--brass-lo),0 0 0 3px #000,0 0 14px 4px rgba(255,170,50,.7)}
+.lamp.off{color:#b0503c}
+.lamp.off .bulb{background:radial-gradient(circle at 35% 30%,#a05040,#3a1410 70%)}
+
+.dial{position:relative;height:122px;border-radius:10px;overflow:hidden;margin-bottom:12px;cursor:ew-resize;
+  touch-action:pan-y;user-select:none;-webkit-user-select:none;
+  background:linear-gradient(180deg,#f7e3a8 0%,#f0cf80 50%,#d9a64a 100%);
+  box-shadow:inset 0 0 0 3px var(--brass-lo),inset 0 0 0 5px #000,
+    inset 0 10px 18px rgba(0,0,0,.35),inset 0 -10px 18px rgba(120,60,0,.35)}
+.dial::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(165deg,rgba(255,255,255,.3),rgba(255,255,255,0) 38%)}
+.scale{position:absolute;inset:0;width:100%;height:100%}
+.num{position:absolute;top:63%;transform:translateX(-50%);font:600 .78rem/1 var(--serif);color:var(--ink)}
+.dlab{position:absolute;top:9px;left:14px;font:700 .62rem/1 var(--sans);letter-spacing:.25em;color:var(--ink);opacity:.75}
+.dlab.r{left:auto;right:14px}
+.oor{position:absolute;top:0;bottom:0;background:rgba(40,20,5,.38)}
+.oor.l{left:0}.oor.r{right:0}
+.needle{position:absolute;top:5px;bottom:5px;width:2px;margin-left:-1px;background:var(--red);z-index:2;
+  box-shadow:0 0 6px rgba(224,48,30,.8);transition:left .45s cubic-bezier(.3,.7,.2,1)}
+.needle::before{content:'';position:absolute;top:-1px;left:-5px;border:6px solid transparent;border-top-color:var(--red)}
+
+.lcd{background:var(--lcd);border-radius:10px;padding:10px 14px 12px;margin-bottom:14px;
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px #3a2a14,inset 0 6px 14px rgba(0,0,0,.8);
+  font-family:var(--mono);color:var(--amber);text-shadow:0 0 8px rgba(255,170,50,.55)}
+.lcd-top{display:flex;align-items:baseline;justify-content:space-between;gap:.5rem}
+.freq{font-size:clamp(2.6rem,12vw,3.8rem);font-weight:700;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.freq small{font-size:.9rem;margin-left:.45rem;opacity:.7;letter-spacing:.15em}
+.state{font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;opacity:.85}
+.rds{margin-top:9px;border-top:1px dashed rgba(255,178,62,.25);padding-top:8px}
+.line{white-space:nowrap;overflow:hidden;font-size:.95rem;min-height:1.35em}
+.line.dim{opacity:.6;font-size:.82rem;min-height:1.3em}
+.line span{display:inline-block}
+.line.scroll span{animation:marq var(--dur,10s) ease-in-out infinite alternate}
+@keyframes marq{from{transform:translateX(0)}to{transform:translateX(calc(-1*var(--dist,0px)))}}
+
+.controls{display:grid;grid-template-columns:minmax(0,320px) auto;justify-content:center;gap:28px;align-items:center;margin-bottom:14px}
+.vu{display:block;width:100%;height:auto}
+.vrow{display:flex;align-items:center;gap:.5rem;margin-top:8px;font:700 .58rem/1 var(--sans);
+  letter-spacing:.16em;text-transform:uppercase;color:var(--brass-lo)}
+.leds{display:flex;gap:3px;flex:1}
+.leds i{flex:1;height:8px;border-radius:2px;background:#2a1c10;box-shadow:inset 0 1px 2px #000}
+.leds i.on{background:var(--amber);box-shadow:0 0 6px rgba(255,170,50,.7)}
+.leds.low i.on{background:var(--red);box-shadow:0 0 6px rgba(224,48,30,.7)}
+.vpct{min-width:2.6rem;text-align:right;color:var(--brass);font-variant-numeric:tabular-nums}
+.knobwrap{display:flex;flex-direction:column;align-items:center;gap:8px}
+.knob{width:118px;height:118px;border-radius:50%;position:relative;cursor:grab;outline:none;touch-action:none;
+  background:radial-gradient(circle at 35% 28%,#5c4a36 0%,#2a1f15 55%,#120c07 100%);
+  box-shadow:0 0 0 3px var(--brass-lo),0 0 0 5px #000,0 10px 18px rgba(0,0,0,.6),inset 0 2px 3px rgba(255,255,255,.18)}
+.knob:active{cursor:grabbing}
+.knob:focus-visible{box-shadow:0 0 0 3px var(--brass-lo),0 0 0 5px #000,0 0 0 8px #ffcf8a,0 10px 18px rgba(0,0,0,.6)}
+.krot{position:absolute;inset:7px;border-radius:50%;transform:rotate(var(--rot,0deg));
+  background:repeating-conic-gradient(rgba(255,255,255,.13) 0 4deg,rgba(0,0,0,.28) 4deg 8deg),
+             radial-gradient(circle at 40% 30%,#4a3a2a,#1a120b)}
+.krot::before{content:'';position:absolute;inset:20px;border-radius:50%;
+  background:radial-gradient(circle at 38% 28%,#e9d28a,var(--brass) 45%,var(--brass-lo));
+  box-shadow:0 2px 6px rgba(0,0,0,.7),inset 0 1px 2px rgba(255,255,255,.5)}
+.krot::after{content:'';position:absolute;left:50%;top:5px;width:4px;height:16px;margin-left:-2px;border-radius:2px;
+  background:var(--brass-hi);box-shadow:0 0 6px rgba(243,221,154,.7)}
+.klab{font:700 .58rem/1 var(--sans);letter-spacing:.3em;text-transform:uppercase;color:var(--brass-lo)}
+
+.brass{font:700 .8rem/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink);
+  padding:.95rem 1rem;border:0;border-radius:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  background:linear-gradient(180deg,var(--brass-hi),var(--brass) 55%,var(--brass-lo));
+  box-shadow:0 4px 0 #5a4310,0 6px 10px rgba(0,0,0,.5);transition:transform .08s,box-shadow .08s}
+.brass:active{transform:translateY(3px);box-shadow:0 1px 0 #5a4310,0 2px 4px rgba(0,0,0,.5)}
+.brass:focus-visible,.key:focus-visible{outline:2px solid #ffcf8a;outline-offset:3px}
+.tunerow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:14px}
+.key{position:relative;height:50px;border:0;border-radius:4px 4px 9px 9px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;
+  background:linear-gradient(180deg,#f6ecd2,#d9c9a0);color:var(--ink);font:700 .85rem/1 var(--mono);
+  box-shadow:0 4px 0 #8f7a48,0 6px 8px rgba(0,0,0,.5);transition:transform .08s,box-shadow .08s}
+.key:active{transform:translateY(3px);box-shadow:0 1px 0 #8f7a48,0 2px 4px rgba(0,0,0,.5)}
+.key.empty{color:#9a875c}
+.key::after{content:'';position:absolute;top:6px;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#b8a678}
+.key.cur::after{background:var(--red);box-shadow:0 0 6px 1px rgba(224,48,30,.8)}
+.setrow{display:flex;gap:10px;margin-bottom:14px}
+.setrow input{flex:1;min-width:0;border-radius:8px;border:0;padding:.85rem 1rem;font:700 1rem/1 var(--mono);
+  color:var(--amber);background:var(--lcd);outline:none;
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px #3a2a14,inset 0 4px 10px rgba(0,0,0,.8);-moz-appearance:textfield}
+.setrow input::placeholder{color:#7a5a2a}
+.setrow input:focus-visible{box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px var(--amber)}
 .setrow input::-webkit-outer-spin-button,.setrow input::-webkit-inner-spin-button{-webkit-appearance:none}
-.setrow .btn{flex:0 0 auto;padding:.78rem 1.1rem}
-.meta{text-align:center;color:#262626;font-size:.62rem;margin-top:.9rem;letter-spacing:.05em}
+.grille{height:34px;border-radius:8px;
+  background:repeating-linear-gradient(90deg,#3b2c1c 0 3px,#1a120b 3px 6px),#1a120b;
+  box-shadow:inset 0 0 0 2px #000,inset 0 0 0 3px rgba(201,162,75,.3),inset 0 6px 10px rgba(0,0,0,.7)}
+.hint{margin-top:10px;text-align:center;font-size:.62rem;letter-spacing:.06em;color:#7a6a50}
+.toast{position:fixed;left:50%;bottom:max(1.2rem,env(safe-area-inset-bottom));transform:translate(-50%,20px);
+  padding:.6rem 1rem;border-radius:999px;background:#000;color:var(--amber);font:700 .75rem/1 var(--mono);
+  border:1px solid var(--brass-lo);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media (max-width:420px){.num{font-size:.66rem}.controls{gap:12px}.knob{width:104px;height:104px}.plate{font-size:1.2rem}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<div class="header">
-  <div class="logo" id="apn">Pi FM</div>
-  <div class="live" id="live"><span class="ld"></span><span id="lst">Idle</span></div>
-</div>
-<div class="fcard">
-  <div class="fnum" id="freq">—</div>
-  <div class="funit">MHz &middot; FM</div>
-</div>
-<div class="card">
-  <div class="badge" id="badge"><span class="bdot"></span><span id="st">Idle</span></div>
-  <div class="ttl" id="ttl">&nbsp;</div>
-  <div class="sub" id="sub">&nbsp;</div>
-</div>
-<div class="vcard">
-  <div class="vlbl">Signal &amp; Level<span id="volwarn"></span></div>
-  <div class="bars" id="bars"></div>
-  <div class="volrow">
-    <div class="vt">Vol</div>
-    <div class="vtrack"><div class="vfill" id="vf"></div></div>
-    <div class="vpct" id="vpct">&mdash;</div>
+<main class="radio">
+ <div class="face">
+  <div class="top">
+    <div><div class="plate" id="apn">Pi FM</div><div class="tag">FM &middot; RDS Transmitter</div></div>
+    <div class="lamp" id="lamp"><span id="lst">Idle</span><span class="bulb"></span></div>
   </div>
-</div>
-<div class="btns">
-  <button class="btn" onclick="tune(-1)">&#9664; Down</button>
-  <button class="btn" onclick="tune(1)">Up &#9654;</button>
-</div>
-<div class="btns">
-  <button class="btn bsm" onclick="jumpTo(87.9)">&#9660; 87.9</button>
-  <button class="btn bsm" onclick="jumpTo(107.9)">107.9 &#9650;</button>
-</div>
-<div class="setrow">
-  <input type="number" id="nf" step="0.1" min="87.1" placeholder="MHz">
-  <button class="btn" onclick="setf()">Set</button>
-</div>
-<div class="meta" id="meta"></div>
+
+  <div class="dial" id="dial" title="Click or drag to tune">
+    <div class="oor l" id="oorl"></div><div class="oor r" id="oorr"></div>
+    <svg class="scale" id="scale" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+    <div id="nums" aria-hidden="true"></div>
+    <div class="dlab">FM</div><div class="dlab r">MHz</div>
+    <div class="needle" id="needle"></div>
+  </div>
+
+  <section class="lcd">
+    <div class="lcd-top">
+      <div class="freq" role="status" aria-label="Current frequency"><span id="fnum">&mdash;</span><small>MHz</small></div>
+      <div class="state" id="st">Idle</div>
+    </div>
+    <div class="rds">
+      <div class="line" id="ttl"><span>&nbsp;</span></div>
+      <div class="line dim" id="sub"><span>&nbsp;</span></div>
+    </div>
+  </section>
+
+  <div class="controls">
+    <div>
+      <svg class="vu" viewBox="0 0 200 112" role="img" aria-label="Signal level meter">
+        <defs><linearGradient id="vuf" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#f7e3a8"/><stop offset="1" stop-color="#dcae58"/></linearGradient></defs>
+        <rect x="2" y="2" width="196" height="108" rx="10" fill="url(#vuf)" stroke="#000" stroke-width="3"/>
+        <rect x="6" y="6" width="188" height="100" rx="7" fill="none" stroke="#7d5f1f" stroke-width="1.5"/>
+        <g id="vuticks"></g>
+        <text x="100" y="80" text-anchor="middle" font-family="Georgia,serif" font-size="12" letter-spacing="3" fill="#2c1b08">LEVEL</text>
+        <g id="vuneedle" transform="rotate(-50 100 104)"><line x1="100" y1="104" x2="100" y2="32" stroke="#b01e10" stroke-width="2"/></g>
+        <circle cx="100" cy="104" r="8" fill="#2a1a10" stroke="#000" stroke-width="1.5"/>
+      </svg>
+      <div class="vrow"><span>Vol</span><div class="leds" id="leds"></div><span class="vpct" id="vpct">&mdash;</span></div>
+    </div>
+    <div class="knobwrap">
+      <div class="knob" id="knob" tabindex="0" role="slider" aria-label="Tuning"
+           aria-valuemin="87.7" aria-valuemax="107.9" aria-valuenow="87.9"><div class="krot" id="krot"></div></div>
+      <div class="klab">Tuning</div>
+    </div>
+  </div>
+
+  <div class="tunerow">
+    <button class="brass" id="dn" type="button">&#9664; Tune</button>
+    <button class="brass" id="up" type="button">Tune &#9654;</button>
+  </div>
+  <div class="keys" id="keys"></div>
+  <form class="setrow" id="setform">
+    <input id="nf" type="number" inputmode="decimal" step="0.1" placeholder="Frequency, MHz" aria-label="Frequency in MHz">
+    <button class="brass" type="submit">Set</button>
+  </form>
+  <div class="grille" aria-hidden="true"></div>
+  <p class="hint">Turn the knob, drag the dial or use the arrow keys. Hold a preset key to store the current station.</p>
+ </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
 <script>
-var N = 22;
-var barsEl = document.getElementById('bars');
-for (var i = 0; i < N; i++) {
-  var b = document.createElement('div'); b.className = 'bar'; barsEl.appendChild(b);
-}
-var bars = barsEl.querySelectorAll('.bar');
-var barEnv = new Array(N).fill(0);
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var NS = 'http://www.w3.org/2000/svg';
+var DMIN = 87.5, DMAX = 108.0;               // printed dial span
+var S = {freq:87.9, step:0.2, fmin:87.7, fmax:107.9};
+var target = null, commitT = null;           // pending (not yet sent) frequency
 var playing = false;
-var S = {freq:'87.9',step:'0.2',fmin:'87.7',fmax:'107.9',play_state:'idle',
-         title:'',artist:'',album:'',ap_name:'Pi FM',volume:null};
 
-function updateBars(level) {
-  for (var i = 0; i < bars.length; i++) {
-    var target = level * (0.35 + Math.random() * 0.65) * 40;
-    barEnv[i] = target > barEnv[i]
-      ? barEnv[i] * 0.25 + target * 0.75   // fast attack
-      : barEnv[i] * 0.78 + target * 0.22;  // slow decay
-    var h = Math.max(3, barEnv[i]);
-    bars[i].style.height = h + 'px';
-    bars[i].style.opacity = 0.18 + (h / 44) * 0.82;
-  }
+function num(x, d){ x = parseFloat(x); return isFinite(x) ? x : d; }
+function clamp(f){ f = Math.round(f*10)/10; return Math.min(Math.max(f, S.fmin), S.fmax); }
+function pct(f){ return 6 + (f - DMIN) / (DMAX - DMIN) * 88; }
+function shown(){ return target !== null ? target : S.freq; }
+function svg(tag, attrs){
+  var e = document.createElementNS(NS, tag);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
 }
 
-function pollLevel() {
-  if (!playing) { updateBars(0); return; }
-  fetch('/api/level').then(function(r){return r.json();}).then(function(d){
-    updateBars(d.level || 0);
-  }).catch(function(){updateBars(0);});
+var toastT;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove('show'); }, 2200);
+}
+
+// ---- dial scale ----
+(function(){
+  var sc = $('scale'), nums = $('nums');
+  for (var h = 0; h <= 41; h++) {
+    var f = DMIN + h * 0.5, x = pct(f), whole = Math.abs(f - Math.round(f)) < 0.01;
+    var big = whole && Math.round(f) % 2 === 0;
+    var y1 = big ? 26 : whole ? 38 : 47;
+    sc.appendChild(svg('line', {x1:x, x2:x, y1:y1, y2:58, stroke:'#2c1b08',
+      'stroke-width': big ? 1.6 : 1, 'vector-effect':'non-scaling-stroke'}));
+    if (big) {
+      var n = document.createElement('div'); n.className = 'num';
+      n.style.left = x + '%'; n.textContent = Math.round(f); nums.appendChild(n);
+    }
+  }
+  sc.appendChild(svg('line', {x1:2, x2:98, y1:58, y2:58, stroke:'#2c1b08',
+    'stroke-width':1.4, 'vector-effect':'non-scaling-stroke'}));
+})();
+
+// ---- VU meter face ----
+(function(){
+  var g = $('vuticks');
+  for (var i = 0; i <= 10; i++) {
+    var a = (-50 + i * 10) * Math.PI / 180, r1 = 74, r2 = (i % 5 === 0) ? 62 : 67;
+    g.appendChild(svg('line', {
+      x1: 100 + Math.sin(a) * r1, y1: 104 - Math.cos(a) * r1,
+      x2: 100 + Math.sin(a) * r2, y2: 104 - Math.cos(a) * r2,
+      stroke: i >= 8 ? '#b01e10' : '#2c1b08', 'stroke-width': i % 5 === 0 ? 2.4 : 1.4}));
+  }
+})();
+var leds = $('leds');
+for (var li = 0; li < 10; li++) leds.appendChild(document.createElement('i'));
+
+var env = 0;
+function vu(level){
+  var t = Math.min(1, level * (0.85 + Math.random() * 0.3));
+  env = t > env ? env * 0.3 + t * 0.7 : env * 0.85 + t * 0.15;
+  $('vuneedle').setAttribute('transform', 'rotate(' + (-50 + env * 100).toFixed(1) + ' 100 104)');
+}
+function pollLevel(){
+  if (!playing) { vu(0); return; }
+  fetch('/api/level').then(function(r){ return r.json(); })
+    .then(function(d){ vu(num(d.level, 0)); }).catch(function(){ vu(0); });
 }
 setInterval(pollLevel, 150);
 
-function render(d) {
-  S = d;
-  document.getElementById('freq').textContent = d.freq;
-  document.getElementById('apn').textContent = d.ap_name || 'Pi FM';
+// ---- drawing ----
+function drawFreq(){
+  var f = shown();
+  $('fnum').textContent = f.toFixed(1);
+  $('needle').style.left = pct(f) + '%';
+  $('krot').style.setProperty('--rot', (((f - S.fmin) / S.step) * 10) + 'deg');
+  var k = $('knob');
+  k.setAttribute('aria-valuemin', S.fmin); k.setAttribute('aria-valuemax', S.fmax);
+  k.setAttribute('aria-valuenow', f.toFixed(1)); k.setAttribute('aria-valuetext', f.toFixed(1) + ' megahertz');
+  $('oorl').style.width = pct(S.fmin) + '%';
+  $('oorr').style.width = (100 - pct(S.fmax)) + '%';
+  var nf = $('nf'); nf.min = S.fmin; nf.max = S.fmax;
+  drawKeys();
+}
+
+function setLine(el, text){
+  var s = el.firstChild, t = text || ' ';
+  if (s.textContent === t) return;
+  s.textContent = t; el.classList.remove('scroll');
+  requestAnimationFrame(function(){
+    var dist = s.scrollWidth - el.clientWidth;
+    if (dist > 4) {
+      el.style.setProperty('--dist', dist + 'px');
+      el.style.setProperty('--dur', Math.max(6, dist / 28) + 's');
+      el.classList.add('scroll');
+    }
+  });
+}
+
+function render(d){
+  S.step = num(d.step, 0.2) || 0.2; S.fmin = num(d.fmin, 87.7); S.fmax = num(d.fmax, 107.9);
+  if (target === null) S.freq = num(d.freq, S.freq);
   var active = d.play_state === 'active', paused = d.play_state === 'paused';
-  var stMap = {active:'Playing', paused:'Paused', idle:'Idle'};
-  document.getElementById('st').textContent = stMap[d.play_state] || 'Idle';
-  document.getElementById('badge').className = 'badge' + (active ? ' playing' : paused ? ' paused' : '');
-  var live = document.getElementById('live');
-  document.getElementById('lst').textContent = active ? 'Live' : 'Idle';
-  live.className = 'live' + (active ? ' on' : '');
-  document.getElementById('ttl').textContent = d.title || (active ? 'AirPlay Stream' : ' ');
-  document.getElementById('sub').textContent = [d.artist, d.album].filter(Boolean).join(' · ') || ' ';
-  var nf = document.getElementById('nf'); nf.min = d.fmin; nf.max = d.fmax; nf.step = d.step;
-  document.getElementById('meta').textContent = 'Step ' + d.step + ' MHz  ·  ' + d.fmin + '–' + d.fmax;
   playing = active;
-  if (!active) { updateBars(0); }
-  var vf = document.getElementById('vf'), vp = document.getElementById('vpct');
-  var warn = document.getElementById('volwarn');
-  if (d.volume !== null && d.volume !== undefined) {
-    var pct = d.volume <= -144 ? 0 : Math.round(Math.max(0, Math.min(100, (d.volume + 30) / 30 * 100)));
-    vf.style.width = pct + '%';
-    vp.textContent = pct + '%';
-    vf.className = 'vfill' + (pct < 25 ? ' low' : pct < 55 ? ' mid' : '');
-    warn.textContent = pct < 25 ? '⚠ Low' : '';
-    warn.style.color = pct < 25 ? '#c33' : '';
-  } else {
-    vf.style.width = active ? '60%' : '0%';
-    vf.className = 'vfill'; vp.textContent = '—'; warn.textContent = '';
+  document.title = (d.ap_name || 'Pi FM');
+  $('apn').textContent = d.ap_name || 'Pi FM';
+  $('st').textContent = active ? 'Playing' : paused ? 'Paused' : 'Idle';
+  $('lst').textContent = active ? 'On air' : 'Idle';
+  $('lamp').className = 'lamp' + (active ? ' on' : '');
+  setLine($('ttl'), d.title || (active ? 'AirPlay stream' : ''));
+  setLine($('sub'), [d.artist, d.album].filter(Boolean).join(' · '));
+  var has = d.volume !== null && d.volume !== undefined, p = 0;
+  if (has) p = d.volume <= -144 ? 0 : Math.round(Math.max(0, Math.min(100, (d.volume + 30) / 30 * 100)));
+  var lit = has ? Math.round(p / 10) : (active ? 6 : 0);
+  var items = leds.children;
+  for (var i = 0; i < items.length; i++) items[i].className = i < lit ? 'on' : '';
+  leds.className = 'leds' + (has && p < 25 ? ' low' : '');
+  $('vpct').textContent = has ? p + '%' : '—';
+  drawFreq();
+}
+
+function poll(){
+  fetch('/api/status').then(function(r){ return r.json(); }).then(function(d){
+    $('lamp').classList.remove('off'); render(d);
+  }).catch(function(){
+    var l = $('lamp'); l.className = 'lamp off'; $('lst').textContent = 'Offline'; playing = false;
+  });
+}
+
+// ---- tuning ----
+function post(path, body){
+  return fetch(path, {method:'POST',
+    headers:{'X-Requested-With':'pifm', 'Content-Type':'application/x-www-form-urlencoded'},
+    body: body || ''});
+}
+function commit(){
+  clearTimeout(commitT); commitT = null;
+  if (target === null) return;
+  var f = target;
+  post('/api/freq', 'freq=' + encodeURIComponent(f.toFixed(1))).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  }).catch(function(){ toast('Could not tune the radio'); })
+    .then(function(){ target = null; setTimeout(poll, 300); });
+}
+function setTarget(f){
+  target = clamp(f); drawFreq();
+  clearTimeout(commitT); commitT = setTimeout(commit, 600);   // one retune per gesture
+}
+function nudge(n){ setTarget(shown() + n * S.step); }
+
+$('up').addEventListener('click', function(){ nudge(1); });
+$('dn').addEventListener('click', function(){ nudge(-1); });
+$('setform').addEventListener('submit', function(e){
+  e.preventDefault();
+  var v = parseFloat($('nf').value);
+  if (!isFinite(v)) { toast('Enter a frequency in MHz'); return; }
+  setTarget(v); commit(); $('nf').value = '';
+});
+
+// knob: ten degrees of turn per step, wheel and keyboard also work
+var knob = $('knob'), turning = false, lastA = 0, acc = 0;
+function ang(e){
+  var r = knob.getBoundingClientRect();
+  return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+}
+knob.addEventListener('pointerdown', function(e){
+  knob.setPointerCapture(e.pointerId); turning = true; lastA = ang(e); acc = 0; e.preventDefault();
+});
+knob.addEventListener('pointermove', function(e){
+  if (!turning) return;
+  var a = ang(e), d = a - lastA; lastA = a;
+  if (d > 180) d -= 360; if (d < -180) d += 360;
+  acc += d;
+  var n = Math.trunc(acc / 10);
+  if (n) { acc -= n * 10; nudge(n); }
+});
+['pointerup', 'pointercancel'].forEach(function(t){
+  knob.addEventListener(t, function(){ turning = false; });
+});
+knob.addEventListener('wheel', function(e){ e.preventDefault(); nudge(e.deltaY < 0 ? 1 : -1); }, {passive:false});
+knob.addEventListener('keydown', function(e){
+  var m = {ArrowRight:1, ArrowUp:1, ArrowLeft:-1, ArrowDown:-1, PageUp:5, PageDown:-5}[e.key];
+  if (m) { e.preventDefault(); nudge(m); }
+  else if (e.key === 'Home') { e.preventDefault(); setTarget(S.fmin); }
+  else if (e.key === 'End') { e.preventDefault(); setTarget(S.fmax); }
+});
+
+// dial: click or drag anywhere on the glass
+var dial = $('dial'), sliding = false;
+function fromX(e){
+  var r = dial.getBoundingClientRect();
+  return DMIN + ((e.clientX - r.left) / r.width * 100 - 6) / 88 * (DMAX - DMIN);
+}
+dial.addEventListener('pointerdown', function(e){ sliding = true; dial.setPointerCapture(e.pointerId); setTarget(fromX(e)); });
+dial.addEventListener('pointermove', function(e){ if (sliding) setTarget(fromX(e)); });
+['pointerup', 'pointercancel'].forEach(function(t){
+  dial.addEventListener(t, function(){ sliding = false; });
+});
+
+// ---- preset keys (stored in this browser) ----
+var presets = [87.9, 107.9, null, null];
+try {
+  var saved = JSON.parse(localStorage.getItem('pifm.presets'));
+  if (Array.isArray(saved) && saved.length === 4)
+    presets = saved.map(function(v){ return isFinite(v) && v !== null ? +v : null; });
+} catch (e) {}
+function savePresets(){ try { localStorage.setItem('pifm.presets', JSON.stringify(presets)); } catch (e) {} }
+var keysEl = $('keys'), held = false;
+presets.forEach(function(_, i){
+  var b = document.createElement('button'); b.type = 'button'; b.className = 'key';
+  var timer;
+  b.addEventListener('pointerdown', function(){
+    held = false;
+    timer = setTimeout(function(){
+      held = true; presets[i] = shown(); savePresets(); drawKeys();
+      toast('Stored ' + presets[i].toFixed(1) + ' on key ' + (i + 1));
+    }, 600);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(function(t){
+    b.addEventListener(t, function(){ clearTimeout(timer); });
+  });
+  b.addEventListener('click', function(e){
+    if (held) { held = false; return; }
+    if (e.shiftKey) { presets[i] = shown(); savePresets(); drawKeys(); return; }
+    if (presets[i] !== null) { setTarget(presets[i]); commit(); }
+    else toast('Hold this key to store the current station');
+  });
+  keysEl.appendChild(b);
+});
+function drawKeys(){
+  var f = shown();
+  for (var i = 0; i < keysEl.children.length; i++) {
+    var b = keysEl.children[i], p = presets[i];
+    b.textContent = p === null ? '—' : p.toFixed(1);
+    b.className = 'key' + (p === null ? ' empty' : '') + (p !== null && Math.abs(p - f) < 0.05 ? ' cur' : '');
+    b.setAttribute('aria-label', p === null ? 'Empty preset ' + (i + 1) : 'Preset ' + (i + 1) + ', ' + p.toFixed(1) + ' megahertz');
   }
 }
-function poll() { fetch('/api/status').then(function(r){return r.json();}).then(render).catch(function(){}); }
-function tune(dir) {
-  var cur = parseFloat(S.freq), step = parseFloat(S.step);
-  var nv = +(Math.min(Math.max(cur + dir*step, parseFloat(S.fmin)), parseFloat(S.fmax)).toFixed(1));
-  document.getElementById('freq').textContent = nv; S.freq = '' + nv;
-  fetch('/api/' + (dir > 0 ? 'up' : 'down'), {method:'POST'}).then(function(){setTimeout(poll,250);});
-}
-function jumpTo(f) {
-  document.getElementById('freq').textContent = f;
-  fetch('/api/freq', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'freq=' + encodeURIComponent(f)}).then(function(){setTimeout(poll,250);});
-}
-function setf() {
-  var v = parseFloat(document.getElementById('nf').value); if (isNaN(v)) return;
-  var nv = +(Math.min(Math.max(v, 87.1), parseFloat(S.fmax)).toFixed(1));
-  document.getElementById('freq').textContent = nv;
-  fetch('/api/freq', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'freq=' + encodeURIComponent(nv)}).then(function(){setTimeout(poll,250);});
-}
-poll(); setInterval(poll, 3000);
+
+drawFreq(); poll(); setInterval(poll, 3000);
+})();
 </script>
 </body>
 </html>"""
+
+_TUNE_LOCK = threading.Lock()
+# Accept Host headers that name an IP literal, a single-label name or a *.local name,
+# so a DNS-rebinding page on some other domain cannot reach the tuner.
+_HOST_RE = re.compile(r"^(\[[0-9a-fA-F:]+\]|[0-9.]+|[A-Za-z0-9-]+(\.local)?)(:\d+)?$")
 
 def _do_tune(new_freq, cur_freq):
     write_freq(new_freq)
@@ -933,84 +1216,105 @@ def _do_tune(new_freq, cur_freq):
             daemon=True).start()
 
 def _tune_steps(steps):
-    cfg = read_config()
-    try:
-        cur  = float(cfg.get("FREQ", "87.9"))
-        step = float(cfg.get("STEP", "0.2"))
-        fmin = float(cfg.get("FMIN", "87.7"))
-        fmax = float(cfg.get("FMAX", "107.9"))
-    except ValueError:
-        return
-    new = round(min(max(cur + steps * step, fmin), fmax), 1)
-    if new != cur:
-        _do_tune(new, cur)
+    with _TUNE_LOCK:
+        cfg = read_config()
+        try:
+            cur  = float(cfg.get("FREQ", "87.9"))
+            step = float(cfg.get("STEP", "0.2"))
+            fmin = float(cfg.get("FMIN", "87.7"))
+            fmax = float(cfg.get("FMAX", "107.9"))
+        except ValueError:
+            return
+        new = round(min(max(cur + steps * step, fmin), fmax), 1)
+        if new != cur:
+            _do_tune(new, cur)
 
 def _tune_absolute(freq_s):
-    cfg = read_config()
-    try:
-        cur  = float(cfg.get("FREQ", "87.9"))
-        fmax = float(cfg.get("FMAX", "107.9"))
-        new  = round(min(max(float(freq_s), 87.1), fmax), 1)
-    except ValueError:
-        return
-    if new != cur:
-        _do_tune(new, cur)
+    """Tune to freq_s clamped to FMIN..FMAX. Returns False if freq_s is not a usable number."""
+    with _TUNE_LOCK:
+        cfg = read_config()
+        try:
+            cur  = float(cfg.get("FREQ", "87.9"))
+            fmin = float(cfg.get("FMIN", "87.7"))
+            fmax = float(cfg.get("FMAX", "107.9"))
+            req  = float(freq_s)
+        except ValueError:
+            return False
+        if not math.isfinite(req):
+            return False
+        new = round(min(max(req, fmin), fmax), 1)
+        if new != cur:
+            _do_tune(new, cur)
+    return True
 
 class _TunerHandler(BaseHTTPRequestHandler):
+    timeout = 10   # drop stalled clients rather than hold a worker open
+
     def log_message(self, fmt, *args): pass  # silence per-request log
 
+    def _send(self, code, ctype=None, body=b""):
+        self.send_response(code)
+        if ctype:
+            self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def _host_ok(self):
+        host = self.headers.get("Host", "")
+        return not host or bool(_HOST_RE.match(host))
+
+    def _same_origin(self):
+        origin = self.headers.get("Origin")
+        return not origin or urllib.parse.urlsplit(origin).netloc == self.headers.get("Host", "")
+
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            body = _HTML.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+        if not self._host_ok():
+            self._send(403)
+        elif self.path in ("/", "/index.html"):
+            self._send(200, "text/html; charset=utf-8", _HTML.encode())
         elif self.path == "/api/status":
-            body = json.dumps(_get_status()).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            self._send(200, "application/json", json.dumps(_get_status()).encode())
         elif self.path == "/api/level":
-            body = json.dumps({"level": _get_level()}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            self._send(200, "application/json", json.dumps({"level": _get_level()}).encode())
         else:
-            self.send_response(404)
-            self.end_headers()
+            self._send(404)
 
     def do_POST(self):
+        # A custom header makes cross-site form posts fail the browser's CORS preflight;
+        # the Host/Origin checks cover DNS rebinding and cross-origin fetches.
+        if (not self._host_ok() or not self._same_origin()
+                or self.headers.get("X-Requested-With") != "pifm"):
+            self._send(403)
+            return
         try:
             if self.path == "/api/up":
                 _tune_steps(+1)
             elif self.path == "/api/down":
                 _tune_steps(-1)
             elif self.path == "/api/freq":
-                length = int(self.headers.get("Content-Length", 0))
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = -1
+                if not 0 <= length <= 256:
+                    self._send(400)
+                    return
                 raw    = self.rfile.read(length).decode(errors="replace")
                 params = urllib.parse.parse_qs(raw)
-                freq_s = params.get("freq", [""])[0]
-                if freq_s:
-                    _tune_absolute(freq_s)
+                if not _tune_absolute(params.get("freq", [""])[0]):
+                    self._send(400)
+                    return
             else:
-                self.send_response(404)
-                self.end_headers()
+                self._send(404)
                 return
-            self.send_response(204)
-            self.end_headers()
+            self._send(204)
         except Exception as e:
             logger.warning(f"HTTP handler error: {e}")
-            self.send_response(500)
-            self.end_headers()
+            self._send(500)
 
 def _http_server_thread():
     cfg  = read_config()
@@ -1019,7 +1323,7 @@ def _http_server_thread():
     except ValueError:
         port = 8750
     try:
-        srv = HTTPServer(("", port), _TunerHandler)
+        srv = ThreadingHTTPServer(("", port), _TunerHandler)
         logger.info(f"Tuner UI: http://0.0.0.0:{port}/")
         srv.serve_forever()
     except Exception as e:
