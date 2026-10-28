@@ -11,6 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Antenna + ground plane on real Pi 3** — pin 7 (GPIO4) antenna wire
   and pin 9 (GND) ground plane wire physically installed and confirmed.
 
+### Added (version)
+- **Version string (`yymmdd`)** — `VERSION` in `airplay2fm.sh`, shown by `--version`, the install log, the deployed
+  script's startup log, `/api/status` and the web page footer.
+
 ### Fixed
 - **shairport-sync source build failed on current upstream** — shairport-sync now builds with FFmpeg support by
   default and `configure` stops without `libavutil`. `airplay2fm.sh` now installs `libavutil-dev`, `libavcodec-dev`,

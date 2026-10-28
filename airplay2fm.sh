@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# yymmdd (UTC) of the last change to anything this script deploys; bump it with every such change.
+VERSION="261028"
+
 FREQ="87.9"; STEP="0.2"; FMIN="87.7"; FMAX="107.9"; AP_NAME="Pi FM Radio"
 VOL_TUNE=0
 UNINSTALL=0; DRY_RUN=0; VERBOSE=0
@@ -22,7 +25,8 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift;;
     --verbose) VERBOSE=1; shift;;
     --vol-tune) VOL_TUNE=1; shift;;
-    *) echo "Usage: sudo bash $0 [--freq 87.9] [--name 'Pi FM Radio'] [--step 0.2] [--min 87.7] [--max 107.9] [--vol-tune] [--dry-run] [--verbose] [--uninstall]"; exit 1;;
+    --version) echo "airplay2fm $VERSION"; exit 0;;
+    *) echo "Usage: sudo bash $0 [--freq 87.9] [--name 'Pi FM Radio'] [--step 0.2] [--min 87.7] [--max 107.9] [--vol-tune] [--dry-run] [--verbose] [--uninstall] [--version]"; exit 1;;
   esac
 done
 
@@ -34,6 +38,7 @@ if [[ $EUID -ne 0 ]]; then
   log "ERROR: Run as root: sudo bash $0"
   exit 1
 fi
+log "airplay2fm $VERSION"
 
 # ---- Path constants ----
 BIN_DIR="/usr/local/bin"
@@ -687,6 +692,7 @@ RDSCTL     = "/run/rds_ctl"
 CONFIG     = "/etc/default/airplay2fm"
 ANNOUNCE   = "/usr/local/bin/airplay_announce.sh"
 LEVEL_FILE = "/run/airplay_level"
+VERSION    = "__AP2FM_VERSION__"   # replaced with the installer's VERSION at install time
 
 def _get_level():
     try:
@@ -744,6 +750,7 @@ def _get_status():
         "fmin":       cfg.get("FMIN",    "87.7"),
         "fmax":       cfg.get("FMAX",    "107.9"),
         "ap_name":    cfg.get("AP_NAME", "Pi FM Radio"),
+        "version":    VERSION,
         "play_state": st["play_state"],
         "title":      st["title"],
         "artist":     st["artist"],
@@ -951,7 +958,7 @@ body{min-height:100dvh;display:flex;align-items:center;justify-content:center;
     <button class="brass" type="submit">Set</button>
   </form>
   <div class="grille" aria-hidden="true"></div>
-  <p class="hint">Turn the knob, drag the dial or use the arrow keys. Hold a preset key to store the current station.</p>
+  <p class="hint">Turn the knob, drag the dial or use the arrow keys. Hold a preset key to store the current station.<br><span id="ver"></span></p>
  </div>
 </main>
 <div class="toast" id="toast" role="status"></div>
@@ -1062,6 +1069,7 @@ function render(d){
   playing = active;
   document.title = (d.ap_name || 'Pi FM');
   $('apn').textContent = d.ap_name || 'Pi FM';
+  $('ver').textContent = d.version ? 'v' + d.version : '';
   $('st').textContent = active ? 'Playing' : paused ? 'Paused' : 'Idle';
   $('lst').textContent = active ? 'On air' : 'Idle';
   $('lamp').className = 'lamp' + (active ? ' on' : '');
@@ -1567,6 +1575,7 @@ def parse_items(pipe_file):
 
 def main():
     global _dacp_id, _dacp_addr, _active_remote, _restore_target, _restore_at, _current_vol
+    logger.info(f"airplay-rds version {VERSION}")
     cfg      = read_config()
     vol_tune = cfg.get("VOL_TUNE", "0").strip() == "1"
     if vol_tune:
@@ -1650,8 +1659,9 @@ def main():
 if __name__ == "__main__":
     main()
 PYAP
+sed -i "s/__AP2FM_VERSION__/${VERSION}/" "$BIN_DIR/airplay-rds.py"
 finalize_script "$BIN_DIR/airplay-rds.py"
-INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay-rds.py")
+INSTALL_SUMMARY+=("Deployed $BIN_DIR/airplay-rds.py (version $VERSION)")
 
 cat >"$SYSUNIT_DIR/airplay-rds.service" <<'RDSVC'
 # Managed by airplay2fm (installer script)
